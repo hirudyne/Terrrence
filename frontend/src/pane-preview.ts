@@ -16,7 +16,11 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function deriveSlug(displayName: string): string {
+function deriveSlug(displayName: string, entityType?: string): string {
+  if (entityType === 'chapter' || /^[Cc]hapter\s+\d/.test(displayName)) {
+    const m = displayName.match(/^[Cc]hapter\s+(\d+)/)
+    if (m) return `C${m[1]}`
+  }
   const ascii = displayName.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
   const slug = ascii.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
   return slug.slice(0, 64) || 'entity'
@@ -30,7 +34,7 @@ function renderBody(body: string): string {
     if (match.startsWith('@@'))      { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-location' }
     else if (match.startsWith('##')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-character' }
     else if (match.startsWith('~~')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-item' }
-    else if (match.startsWith('??')) { display = match.slice(2, -2); slug = deriveSlug(display);  cssClass = 'ref-chapter' }
+    else if (match.startsWith('??')) { display = match.slice(2, -2); slug = deriveSlug(display, 'chapter'); cssClass = 'ref-chapter' }
     else { return `<span class="ref-event">${escapeHtml(match)}</span>` }
     return `<a class="ref-link ${cssClass}" data-slug="${slug}" href="#">${escapeHtml(display)}</a>`
   })

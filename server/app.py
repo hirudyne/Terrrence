@@ -196,11 +196,16 @@ SLUG_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
 PROJECTS_ROOT = Path(os.environ.get("TERRRENCE_PROJECTS", "/workspace/projects"))
 
 
-def _derive_slug(display_name: str) -> str:
+def _derive_slug(display_name: str, entity_type: str = "") -> str:
     """Derive a filesystem-safe slug from a display name.
-    'Sholver\'s Mum' -> 'sholvers_mum', 'Old Barn!' -> 'old_barn'
+    Chapters: 'Chapter 3 - Some Title' -> 'C3'
+    Others:   'Sholver\'s Mum' -> 'sholver_s_mum'
     """
     import unicodedata
+    if entity_type == "chapter":
+        m = re.match(r'^[Cc]hapter\s+(\d+)', display_name.strip())
+        if m:
+            return f"C{m.group(1)}"
     nfkd = unicodedata.normalize("NFKD", display_name)
     ascii_str = nfkd.encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r'[^a-z0-9]+', '_', ascii_str.lower()).strip('_')
@@ -372,26 +377,22 @@ def _read_entity_file(project_slug: str, entity_slug: str) -> fm.Post:
     return fm.load(str(path))
 
 
-def _extract_refs(body_text: str) -> list[tuple[str, str]]:
-    """Return list of (slug, type) tuples from prose references.
-    Slugs are derived from the display text inside the delimiters.
-    """
+def _extract_refs(body_text: str) -> list[tuple[str, str, str]]:
+    """Return list of (slug, type, display_name) tuples from prose references."""
     refs = []
-    # @@display@@  ##display##  ~~display~~  ??slug??
     for pattern, ref_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4]]:
         for m in pattern.finditer(body_text):
             display = m.group(1).strip()
-            slug = _derive_slug(display)
-            refs.append((slug, ref_type))
-    # event: !!trigger!!effect!! - scan inside for nested refs
+            slug = _derive_slug(display, ref_type)
+            refs.append((slug, ref_type, display))
     event_pat = REF_PATTERNS[3][0]
     for m in event_pat.finditer(body_text):
         for part in (m.group(1), m.group(2)):
             for inner_pat, inner_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4]]:
                 for im in inner_pat.finditer(part):
                     display = im.group(1).strip()
-                    slug = _derive_slug(display)
-                    refs.append((slug, inner_type))
+                    slug = _derive_slug(display, inner_type)
+                    refs.append((slug, inner_type, display))
     return refs
 
 
@@ -407,7 +408,7 @@ def _rebuild_refs(project_id: int, entity_id: int, body_text: str,
     with db() as conn:
         conn.execute("DELETE FROM entity_refs WHERE src_entity_id = ?", (entity_id,))
         counts: dict[tuple, int] = {}
-        for slug, ref_type in refs:
+        for slug, ref_type, display_name_ref in refs:
             target = conn.execute(
                 "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
                 (project_id, slug),
@@ -429,12 +430,12 @@ def _rebuild_refs(project_id: int, entity_id: int, body_text: str,
                         continue
                 cur = conn.execute(
                     "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (?,?,?,?,?)",
-                    (project_id, slug, ref_type, slug, parent_id),
+                    (project_id, slug, ref_type, display_name_ref, parent_id),
                 )
                 stub_id = cur.lastrowid
                 target = conn.execute("SELECT id FROM entities WHERE id=?", (stub_id,)).fetchone()
                 new_stubs.append(slug)
-                _write_entity_file(project_slug, slug, slug, ref_type, "")
+                _write_entity_file(project_slug, slug, display_name_ref, ref_type, "")
             if target:
                 key = (entity_id, target["id"])
                 counts[key] = counts.get(key, 0) + 1
@@ -615,7 +616,7 @@ def ensure_entity(
         raise HTTPException(status_code=400, detail="empty display name")
     if body.type not in ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="invalid type")
-    slug = _derive_slug(display_name)
+    slug = _derive_slug(display_name, body.type)
     if not slug or not _slug_valid(slug):
         raise HTTPException(status_code=400, detail="could not derive valid slug")
     with db() as conn:
