@@ -1,0 +1,18 @@
+# Runtime data - never commit
+data/
+projects/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Frontend build output and dependencies
+frontend/node_modules/
+frontend/dist/
+
+# Secrets
+.gateway-token
+
+# Logs
+*.log

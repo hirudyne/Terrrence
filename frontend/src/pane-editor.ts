@@ -1,0 +1,113 @@
+import { api } from './api'
+// Main editor pane - tabs for open entities, CodeMirror 6 + Yjs per entity.
+
+import { getState, setState, subscribe } from './state'
+import { getOrCreateEditor, destroyEditor, refreshEntityCache } from './editor'
+
+export class EditorPane {
+  private el: HTMLElement
+  private openTabs: string[] = []     // entity slugs in tab order
+  private activeTab: string | null = null
+  private editorArea: HTMLElement
+
+  constructor(container: HTMLElement) {
+    this.el = container
+    this.el.className = 'editor-pane'
+
+    const tabBar = document.createElement('div')
+    tabBar.className = 'editor-tab-bar'
+    tabBar.id = 'editor-tab-bar'
+    this.el.appendChild(tabBar)
+
+    this.editorArea = document.createElement('div')
+    this.editorArea.className = 'editor-area'
+    this.el.appendChild(this.editorArea)
+
+    subscribe(state => {
+      if (state.activeEntitySlug && state.projectSlug) {
+        this._openEntity(state.activeEntitySlug)
+      }
+      if (!state.projectSlug) {
+        this._showNoProject()
+      }
+    })
+
+    this._showNoProject()
+  }
+
+  private _showNoProject() {
+    this.editorArea.innerHTML = '<div class="editor-empty">Open or create a project to start editing.</div>'
+  }
+
+  private async _openEntity(slug: string) {
+    const state = getState()
+    if (!state.projectSlug) return
+
+    if (!this.openTabs.includes(slug)) {
+      this.openTabs.push(slug)
+    }
+    this.activeTab = slug
+    this._renderTabBar()
+    await this._mountEditor(slug)
+
+    // refresh autocomplete cache
+    refreshEntityCache(state.projectSlug)
+  }
+
+  private _renderTabBar() {
+    const bar = document.getElementById('editor-tab-bar')!
+    bar.innerHTML = ''
+    for (const slug of this.openTabs) {
+      const tab = document.createElement('button')
+      tab.className = 'editor-tab' + (slug === this.activeTab ? ' active' : '')
+      tab.textContent = slug
+      tab.onclick = () => {
+        this.activeTab = slug
+        setState({ activeEntitySlug: slug })
+        this._renderTabBar()
+        this._mountEditor(slug)
+      }
+
+      const close = document.createElement('span')
+      close.className = 'editor-tab-close'
+      close.textContent = 'x'
+      close.onclick = (e) => {
+        e.stopPropagation()
+        this._closeTab(slug)
+      }
+      tab.appendChild(close)
+      bar.appendChild(tab)
+    }
+  }
+
+  private _closeTab(slug: string) {
+    destroyEditor(slug)
+    this.openTabs = this.openTabs.filter(s => s !== slug)
+    if (this.activeTab === slug) {
+      this.activeTab = this.openTabs[this.openTabs.length - 1] ?? null
+      if (this.activeTab) setState({ activeEntitySlug: this.activeTab })
+    }
+    this._renderTabBar()
+    if (this.activeTab) {
+      this._mountEditor(this.activeTab)
+    } else {
+      this.editorArea.innerHTML = '<div class="editor-empty">No open entities.</div>'
+    }
+  }
+
+  private async _mountEditor(slug: string) {
+    const state = getState()
+    if (!state.projectSlug) return
+
+    this.editorArea.innerHTML = ''
+    const detail = await api.getEntity(state.projectSlug, slug)
+
+    const wrap = document.createElement('div')
+    wrap.style.height = '100%'
+    this.editorArea.appendChild(wrap)
+
+    // Save logic is now handled inside editor.ts (per-space + 1s debounce).
+    // onChange callback here is a no-op kept for future use.
+    getOrCreateEditor(slug, wrap, detail.body, (_content) => { /* handled in editor.ts */ })
+  }
+}

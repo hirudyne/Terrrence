@@ -1,0 +1,27 @@
+{
+  "name": "terrrence-frontend",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5173",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vite": "^4.5.3"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.18.4",
+    "@codemirror/commands": "^6.7.1",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/language": "^6.10.8",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.2",
+    "golden-layout": "^2.6.0",
+    "y-codemirror.next": "^0.3.5",
+    "y-websocket": "^1.5.4",
+    "yjs": "^13.6.22"
+  }
+}

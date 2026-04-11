@@ -1,0 +1,54 @@
+// Golden Layout 2 - three-pane layout: nav (1/4), editor (1/2), preview (1/4).
+
+import { GoldenLayout, LayoutConfig } from 'golden-layout'
+import { NavPane } from './pane-nav'
+import { EditorPane } from './pane-editor'
+import { PreviewPane } from './pane-preview'
+
+const LAYOUT_CONFIG: LayoutConfig = {
+  root: {
+    type: 'row',
+    content: [
+      {
+        type: 'component',
+        componentType: 'nav',
+        title: 'Navigator',
+        width: 20,
+        isClosable: false,
+      },
+      {
+        type: 'component',
+        componentType: 'editor',
+        title: 'Editor',
+        width: 55,
+        isClosable: false,
+      },
+      {
+        type: 'component',
+        componentType: 'preview',
+        title: 'Preview',
+        width: 25,
+        isClosable: false,
+      },
+    ],
+  },
+}
+
+export function initLayout(appEl: HTMLElement): void {
+  const layout = new GoldenLayout(appEl)
+
+  layout.registerComponentFactoryFunction('nav', (container) => {
+    new NavPane(container.element as HTMLElement)
+  })
+
+  layout.registerComponentFactoryFunction('editor', (container) => {
+    new EditorPane(container.element as HTMLElement)
+  })
+
+  layout.registerComponentFactoryFunction('preview', (container) => {
+    new PreviewPane(container.element as HTMLElement)
+  })
+
+  layout.loadLayout(LAYOUT_CONFIG)
+  layout.init()
+}
