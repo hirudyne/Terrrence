@@ -8,20 +8,22 @@ const ALL_TYPES = ['game', 'chapter', 'location', 'character', 'item', 'event'] 
 const TYPE_PREFIX: Record<string, string> = {
   game:      'G',
   chapter:   '??',
-  location:  '@',
-  character: '#',
-  item:      '~',
+  location:  '@@',
+  character: '##',
+  item:      '~~',
   event:     '!!',
 }
-// Types available in the "new entity" dropdown - game is conditional
 const CREATABLE_TYPES = ['chapter', 'location', 'character', 'item', 'event'] as const
+
+// SVG icons
+const EYE_ICON = `<svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`
+const TRASH_ICON = `<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>`
 
 export class NavPane {
   private el: HTMLElement
   private mode: ViewMode = 'tree'
   private entities: Entity[] = []
   private selectedType: string = 'location'
-
   private _version: string = ''
 
   constructor(container: HTMLElement) {
@@ -34,21 +36,11 @@ export class NavPane {
     this._render()
   }
 
-  private _renderVersionLabel() {
-    const existing = this.el.querySelector('.nav-version')
-    if (existing) { existing.textContent = `v${this._version}`; return }
-    const label = document.createElement('div')
-    label.className = 'nav-version'
-    label.textContent = `v${this._version}`
-    this.el.appendChild(label)
-  }
-
   async load(projectSlug: string) {
     this.entities = await api.listEntities(projectSlug)
     this._render()
   }
 
-  // Add an entity to the local cache immediately without waiting for a server round-trip.
   addEntityLocal(entity: { slug: string; type: string; display_name: string; parent_slug: string | null }) {
     if (!this.entities.find(e => e.slug === entity.slug)) {
       this.entities = [...this.entities, entity]
@@ -60,6 +52,7 @@ export class NavPane {
     const state = getState()
     this.el.innerHTML = ''
 
+    // -- header --
     const header = document.createElement('div')
     header.className = 'nav-header'
 
@@ -89,20 +82,15 @@ export class NavPane {
       await api.logout().catch(() => {})
       setState({ label: null, projectSlug: null, projectName: null, activeEntitySlug: null, previewEntitySlug: null })
       document.getElementById('app')!.innerHTML = ''
-      const loginEl = showLogin(() => {
-        loginEl.remove()
-        const layoutEl = document.getElementById('layout-root')
-        if (layoutEl) layoutEl.innerHTML = ''
-        window.location.reload()
-      })
+      const loginEl = showLogin(() => { loginEl.remove(); window.location.reload() })
       document.getElementById('app')!.appendChild(loginEl)
     }
     header.appendChild(logoutBtn)
-
     this.el.appendChild(header)
 
     if (!state.projectSlug) {
       this.el.appendChild(this._projectSelector())
+      if (this._version) this._renderVersionLabel()
       return
     }
 
@@ -121,6 +109,17 @@ export class NavPane {
     if (this._version) this._renderVersionLabel()
   }
 
+  private _renderVersionLabel() {
+    const existing = this.el.querySelector('.nav-version')
+    if (existing) { existing.textContent = `v${this._version}`; return }
+    const label = document.createElement('div')
+    label.className = 'nav-version'
+    label.textContent = `v${this._version}`
+    this.el.appendChild(label)
+  }
+
+  // ---- project selector (no project open) ----
+
   private _projectSelector(): HTMLElement {
     const wrap = document.createElement('div')
     wrap.className = 'project-selector'
@@ -138,15 +137,15 @@ export class NavPane {
     const ul = document.createElement('ul')
     ul.className = 'nav-tree'
 
-    // Game entity at the top, with chapters as children
+    // Game entity at top
     const gameEntity = this.entities.find(e => e.type === 'game')
     if (gameEntity) {
       const chapters = this.entities.filter(e => e.type === 'chapter')
       ul.appendChild(this._gameGroup(gameEntity, chapters))
     }
 
-    // Remaining types
-    for (const type of (['location', 'character', 'item', 'event'] as const)) {
+    // Locations, characters, items (flat groups)
+    for (const type of (['location', 'character', 'item'] as const)) {
       const group = this.entities.filter(e => e.type === type)
       const li = document.createElement('li')
       li.className = 'nav-group'
@@ -166,24 +165,64 @@ export class NavPane {
     const li = document.createElement('li')
     li.className = 'nav-group'
 
+    // Game header row - clicking opens the game entity itself in editor
+    const row = document.createElement('div')
+    row.className = 'nav-game-row'
+
     const label = document.createElement('span')
-    label.className = 'nav-group-label nav-group-label--game'
+    label.className = 'nav-group-label nav-group-label--game nav-entity-name'
     label.textContent = `G ${game.display_name}`
-    label.title = game.slug
-    label.style.cursor = 'pointer'
+    label.title = 'Open game document in editor'
     label.onclick = () => setState({ activeEntitySlug: game.slug })
+    row.appendChild(label)
 
-    const previewBtn = document.createElement('span')
-    previewBtn.className = 'nav-preview-btn'
-    previewBtn.textContent = '>'
-    previewBtn.title = 'Open in preview'
-    previewBtn.onclick = (e) => { e.stopPropagation(); setState({ previewEntitySlug: game.slug }) }
-    label.appendChild(previewBtn)
-    li.appendChild(label)
+    const actions = document.createElement('span')
+    actions.className = 'nav-entity-actions'
+    const eyeBtn = this._iconBtn(EYE_ICON, 'Open in preview', () => setState({ previewEntitySlug: game.slug }))
+    actions.appendChild(eyeBtn)
+    row.appendChild(actions)
+    li.appendChild(row)
 
-    const children = document.createElement('ul')
-    for (const chapter of chapters) children.appendChild(this._entityItem(chapter))
-    li.appendChild(children)
+    // Chapters as children, each with their events nested under them
+    const chapList = document.createElement('ul')
+    chapList.className = 'nav-chapter-list'
+    for (const chapter of chapters) {
+      const events = this.entities.filter(e => e.type === 'event' && e.parent_slug === chapter.slug)
+      chapList.appendChild(this._chapterGroup(chapter, events))
+    }
+    li.appendChild(chapList)
+    return li
+  }
+
+  private _chapterGroup(chapter: Entity, events: Entity[]): HTMLElement {
+    const li = document.createElement('li')
+    li.className = 'nav-chapter-group'
+
+    const row = document.createElement('div')
+    row.className = 'nav-entity-item'
+    const state = getState()
+    if (chapter.slug === state.activeEntitySlug) row.classList.add('active')
+
+    const name = document.createElement('span')
+    name.className = 'nav-entity-name'
+    name.textContent = `?? ${chapter.display_name}`
+    name.title = chapter.slug
+    name.onclick = () => setState({ activeEntitySlug: chapter.slug })
+    row.appendChild(name)
+
+    const actions = document.createElement('span')
+    actions.className = 'nav-entity-actions'
+    actions.appendChild(this._iconBtn(EYE_ICON, 'Open in preview', () => setState({ previewEntitySlug: chapter.slug })))
+    actions.appendChild(this._iconBtn(TRASH_ICON, 'Delete', () => this._confirmDelete(chapter), true))
+    row.appendChild(actions)
+    li.appendChild(row)
+
+    if (events.length > 0) {
+      const evList = document.createElement('ul')
+      evList.className = 'nav-event-list'
+      for (const ev of events) evList.appendChild(this._entityItem(ev))
+      li.appendChild(evList)
+    }
     return li
   }
 
@@ -214,7 +253,7 @@ export class NavPane {
     return wrap
   }
 
-  // ---- entity item ----
+  // ---- entity item (generic) ----
 
   private _entityItem(entity: Entity): HTMLElement {
     const li = document.createElement('li')
@@ -226,43 +265,32 @@ export class NavPane {
     nameSpan.className = 'nav-entity-name'
     nameSpan.textContent = entity.display_name
     nameSpan.title = entity.slug
+    nameSpan.onclick = () => setState({ activeEntitySlug: entity.slug })
     li.appendChild(nameSpan)
-
-    li.onclick = (e) => {
-      // Only open in editor if click was not on the actions area
-      if (!(e.target as HTMLElement).closest('.nav-entity-actions')) {
-        setState({ activeEntitySlug: entity.slug })
-      }
-    }
 
     const actions = document.createElement('span')
     actions.className = 'nav-entity-actions'
-
-    const previewBtn = document.createElement('span')
-    previewBtn.className = 'nav-action-btn'
-    previewBtn.textContent = '>'
-    previewBtn.title = 'Open in preview'
-    previewBtn.onclick = (e) => { e.stopPropagation(); setState({ previewEntitySlug: entity.slug }) }
-    actions.appendChild(previewBtn)
-
+    actions.appendChild(this._iconBtn(EYE_ICON, 'Open in preview', (e) => { e.stopPropagation(); setState({ previewEntitySlug: entity.slug }) }))
     if (entity.type !== 'game') {
-      const delBtn = document.createElement('span')
-      delBtn.className = 'nav-action-btn nav-action-btn--danger'
-      delBtn.textContent = 'x'
-      delBtn.title = 'Delete'
-      delBtn.onclick = (e) => { e.stopPropagation(); this._confirmDelete(entity) }
-      actions.appendChild(delBtn)
+      actions.appendChild(this._iconBtn(TRASH_ICON, 'Delete', (e) => { e.stopPropagation(); this._confirmDelete(entity) }, true))
     }
-
     li.appendChild(actions)
     return li
+  }
+
+  private _iconBtn(svgContent: string, title: string, handler: (e: MouseEvent) => void, danger = false): HTMLElement {
+    const btn = document.createElement('button')
+    btn.className = 'nav-action-btn' + (danger ? ' nav-action-btn--danger' : '')
+    btn.title = title
+    btn.innerHTML = svgContent
+    btn.onclick = handler
+    return btn
   }
 
   // ---- modals ----
 
   private _showProjectModal() {
     const modal = this._modal('Projects', (form, close, err) => {
-      // -- existing projects list --
       const listLabel = document.createElement('div')
       listLabel.className = 'modal-field-label'
       listLabel.textContent = 'Your projects'
@@ -282,22 +310,17 @@ export class NavPane {
             const btn = document.createElement('button')
             btn.className = 'modal-project-item'
             btn.innerHTML = `<span class="mpi-name">${p.display_name}</span><span class="mpi-slug">${p.slug}</span>`
-            btn.onclick = () => {
-              setState({ projectSlug: p.slug, projectName: p.display_name })
-              close()
-            }
+            btn.onclick = () => { setState({ projectSlug: p.slug, projectName: p.display_name }); close() }
             listWrap.appendChild(btn)
           }
         }
       }).catch(() => { listWrap.textContent = 'Failed to load.' })
 
-      // -- divider --
       const div = document.createElement('div')
       div.className = 'modal-divider'
       div.textContent = 'or create new'
       form.appendChild(div)
 
-      // -- create form --
       const slugInput = this._field(form, 'Slug', 'text', 'my_game')
       const nameInput = this._field(form, 'Display name', 'text', 'My Game')
       this._submitBtn(form, 'Create project', async () => {
@@ -318,9 +341,10 @@ export class NavPane {
     const state = getState()
     if (!state.projectSlug) return
     const hasGame = this.entities.some(e => e.type === 'game')
+    const chapters = this.entities.filter(e => e.type === 'chapter')
 
     const modal = this._modal('New entity', (form, close, err) => {
-      // type dropdown
+      // Type dropdown
       const typeLabel = document.createElement('label')
       typeLabel.className = 'modal-field-label'
       typeLabel.textContent = 'Type'
@@ -338,6 +362,39 @@ export class NavPane {
       }
       form.appendChild(typeSelect)
 
+      // Chapter selector - shown only when type = event
+      const chapterRow = document.createElement('div')
+      chapterRow.style.display = 'none'
+      const chapterLabel = document.createElement('label')
+      chapterLabel.className = 'modal-field-label'
+      chapterLabel.textContent = 'Parent chapter'
+      chapterRow.appendChild(chapterLabel)
+      const chapterSelect = document.createElement('select')
+      chapterSelect.className = 'modal-select'
+      if (chapters.length === 0) {
+        const opt = document.createElement('option')
+        opt.textContent = 'No chapters yet - create a chapter first'
+        opt.disabled = true
+        chapterSelect.appendChild(opt)
+      } else {
+        for (const ch of chapters) {
+          const opt = document.createElement('option')
+          opt.value = ch.slug
+          opt.textContent = ch.display_name
+          // Pre-select if a chapter is currently open in editor
+          if (ch.slug === state.activeEntitySlug) opt.selected = true
+          chapterSelect.appendChild(opt)
+        }
+      }
+      chapterRow.appendChild(chapterSelect)
+      form.appendChild(chapterRow)
+
+      typeSelect.onchange = () => {
+        chapterRow.style.display = typeSelect.value === 'event' ? 'flex' : 'none'
+        chapterRow.style.flexDirection = 'column'
+        chapterRow.style.gap = '4px'
+      }
+
       const slugInput  = this._field(form, 'Slug', 'text', 'e.g. C1 or old_barn')
       const nameInput  = this._field(form, 'Display name', 'text', 'e.g. Chapter 1 - Bundle Beginnings')
 
@@ -346,17 +403,18 @@ export class NavPane {
         const slug = slugInput.value.trim()
         const name = nameInput.value.trim()
         if (!slug || !name) { err('Slug and display name required.'); return }
+        if (type === 'event' && chapters.length === 0) { err('Create a chapter first.'); return }
+        const parentSlug = type === 'event' ? chapterSelect.value : undefined
         try {
-          const entity = await api.createEntity(state.projectSlug!, { slug, display_name: name, type })
+          const entity = await api.createEntity(state.projectSlug!, { slug, display_name: name, type, parent_slug: parentSlug })
           this.addEntityLocal({
             slug: entity.slug,
             type: entity.type,
             display_name: entity.display_name,
-            parent_slug: type === 'chapter' ? 'game' : null,
+            parent_slug: parentSlug ?? null,
           })
           setState({ activeEntitySlug: slug })
           close()
-          // Background sync to catch any server-side differences
           this.load(state.projectSlug!).catch(() => {})
         } catch (e: any) { err(e.message) }
       })
@@ -370,7 +428,8 @@ export class NavPane {
     if (!confirm(`Delete "${entity.display_name}"? This cannot be undone.`)) return
     try {
       await api.deleteEntity(state.projectSlug, entity.slug)
-      await this.load(state.projectSlug)
+      this.entities = this.entities.filter(e => e.slug !== entity.slug)
+      this._render()
       if (state.activeEntitySlug === entity.slug) setState({ activeEntitySlug: null })
       if (state.previewEntitySlug === entity.slug) setState({ previewEntitySlug: null })
     } catch (e: any) {
@@ -386,17 +445,13 @@ export class NavPane {
   ): HTMLElement {
     const overlay = document.createElement('div')
     overlay.className = 'modal-overlay'
-
     const box = document.createElement('div')
     box.className = 'modal-box'
-
     const hdr = document.createElement('div')
     hdr.className = 'modal-header'
-
     const h2 = document.createElement('h2')
     h2.textContent = title
     hdr.appendChild(h2)
-
     const closeBtn = document.createElement('button')
     closeBtn.className = 'modal-close'
     closeBtn.textContent = 'x'
@@ -404,18 +459,14 @@ export class NavPane {
     closeBtn.onclick = close
     hdr.appendChild(closeBtn)
     box.appendChild(hdr)
-
     const errEl = document.createElement('div')
     errEl.className = 'modal-error'
     box.appendChild(errEl)
-
     const form = document.createElement('div')
     form.className = 'modal-form'
     box.appendChild(form)
-
     overlay.appendChild(box)
     overlay.onclick = (e) => { if (e.target === overlay) close() }
-
     builder(form, close, (msg) => { errEl.textContent = msg })
     return overlay
   }

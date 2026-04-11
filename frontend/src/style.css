@@ -76,9 +76,7 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 }
 .nav-entity-item:hover { background: var(--bg3); }
 .nav-entity-item.active { background: var(--bg3); color: var(--accent); }
-.nav-preview-btn { font-size: 0.7rem; color: var(--text-dim); padding: 0 4px; opacity: 0; }
-.nav-entity-item:hover .nav-preview-btn { opacity: 1; }
-.nav-preview-btn:hover { color: var(--accent); }
+
 
 /* ---- Editor pane ---- */
 .editor-pane { height: 100%; display: flex; flex-direction: column; }
@@ -159,12 +157,13 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 
 /* ---- Nav entity actions ---- */
 .nav-entity-item { justify-content: space-between; }
-.nav-entity-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nav-entity-actions { display: flex; gap: 4px; opacity: 0; flex-shrink: 0; }
-.nav-entity-item:hover .nav-entity-actions { opacity: 1; }
-.nav-action-btn { font-size: 0.7rem; color: var(--text-dim); padding: 0 3px; cursor: pointer; }
-.nav-action-btn:hover { color: var(--accent); }
-.nav-action-btn--danger:hover { color: var(--danger); }
+.nav-entity-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.nav-entity-actions { display: flex; gap: 2px; align-items: center; flex-shrink: 0; }
+.nav-action-btn { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: none; border: none; color: var(--text-dim); cursor: pointer; border-radius: 3px; padding: 0; opacity: 0.5; }
+.nav-entity-item:hover .nav-action-btn { opacity: 1; }
+.nav-action-btn:hover { color: var(--accent); background: rgba(255,255,255,0.07); }
+.nav-action-btn--danger:hover { color: var(--danger); background: none; }
+.nav-action-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .nav-group-label--game { color: var(--accent); cursor: pointer; }
 
 /* ---- Chapter token colour ---- */
@@ -239,3 +238,10 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 }
 /* Make nav-pane a flex column so margin-top:auto on version pushes it to bottom */
 .nav-pane { display: flex; flex-direction: column; }
+
+/* ---- Chapter/event nesting ---- */
+.nav-game-row { display: flex; align-items: center; justify-content: space-between; }
+.nav-chapter-list { list-style: none; padding-left: 0.75rem; }
+.nav-chapter-group { margin-bottom: 2px; }
+.nav-event-list { list-style: none; padding-left: 0.75rem; }
+.nav-event-list .nav-entity-item { font-size: 0.8rem; }

@@ -566,6 +566,7 @@ class UpdateEntityBody(BaseModel):
 class EnsureEntityBody(BaseModel):
     display_name: str
     type: str
+    parent_slug: Optional[str] = None
 
 
 @app.post("/projects/{project_slug}/entities/ensure", status_code=200)
@@ -601,6 +602,24 @@ def ensure_entity(
             ).fetchone()
             if game_row:
                 parent_id = game_row["id"]
+        elif body.type == "event":
+            if not body.parent_slug:
+                # No chapter context - refuse to create, return sentinel
+                return {"slug": None, "type": "event", "display_name": display_name, "created": False, "blocked": True}
+            parent_row = conn.execute(
+                "SELECT id FROM entities WHERE project_id = ? AND slug = ? AND type = 'chapter'",
+                (project["id"], body.parent_slug),
+            ).fetchone()
+            if not parent_row:
+                return {"slug": None, "type": "event", "display_name": display_name, "created": False, "blocked": True}
+            parent_id = parent_row["id"]
+        elif body.parent_slug:
+            parent_row = conn.execute(
+                "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+                (project["id"], body.parent_slug),
+            ).fetchone()
+            if parent_row:
+                parent_id = parent_row["id"]
         cur = conn.execute(
             "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (?, ?, ?, ?, ?)",
             (project["id"], slug, body.type, display_name, parent_id),

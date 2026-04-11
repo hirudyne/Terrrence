@@ -61,8 +61,8 @@ export const api = {
     req<Entity>('POST', `/projects/${project}/entities`, data),
   deleteEntity: (project: string, slug: string) =>
     req<void>('DELETE', `/projects/${project}/entities/${slug}`),
-  ensureEntity: (project: string, display_name: string, type: string) =>
-    req<Entity & { created: boolean }>('POST', `/projects/${project}/entities/ensure`, { display_name, type }),
+  ensureEntity: (project: string, display_name: string, type: string, parent_slug?: string) =>
+    req<Entity & { created: boolean; blocked?: boolean }>('POST', `/projects/${project}/entities/ensure`, { display_name, type, parent_slug }),
 
   listAssets: (project: string) =>
     req<Asset[]>('GET', `/projects/${project}/assets`),

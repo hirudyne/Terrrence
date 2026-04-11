@@ -142,6 +142,7 @@ const _instances: Map<string, EditorInstance> = new Map()
 
 export function getOrCreateEditor(
   entitySlug: string,
+  entityType: string,
   container: HTMLElement,
   initialContent: string,
   onChange?: (content: string) => void
@@ -222,15 +223,19 @@ export function getOrCreateEditor(
           if (!result) return
           const { displayName, type } = result
           const nav = (window as any)._terrrenceNav
-          api.ensureEntity(project, displayName, type)
+          // Events only auto-create when typed inside a chapter document
+          const parentSlug = (type === 'event') ? entitySlug : undefined
+          if (type === 'event' && entityType !== 'chapter') return
+          api.ensureEntity(project, displayName, type, parentSlug)
             .then(entity => {
+              if (entity.blocked || !entity.slug) return
               if (entity.created) {
                 refreshEntityCache(project)
                 if (nav) nav.addEntityLocal({
                   slug: entity.slug,
                   type: entity.type,
                   display_name: entity.display_name,
-                  parent_slug: type === 'chapter' ? 'game' : null,
+                  parent_slug: parentSlug ?? null,
                 })
               }
               setState({ previewEntitySlug: entity.slug })

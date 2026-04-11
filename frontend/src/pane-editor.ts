@@ -119,7 +119,6 @@ export class EditorPane {
     this.editorArea.appendChild(wrap)
 
     // Save logic is now handled inside editor.ts (per-space + 1s debounce).
-    // onChange callback here is a no-op kept for future use.
-    getOrCreateEditor(slug, wrap, detail.body, (_content) => { /* handled in editor.ts */ })
+    getOrCreateEditor(slug, detail.type ?? 'unknown', wrap, detail.body, (_content) => { /* handled in editor.ts */ })
   }
 }
