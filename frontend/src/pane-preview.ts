@@ -10,22 +10,29 @@ const TYPE_PREFIX: Record<string, string> = {
   chapter:   '??',
 }
 
-const TOKEN_RE = /(@[a-zA-Z0-9_-]+|#[a-zA-Z0-9_-]+|~([a-zA-Z0-9_-]+)~|!!(?:[^!]|![^!])*!!|\?\?([a-zA-Z0-9_-]+)\?\?)/g
+const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[a-zA-Z0-9_-]+\?\?)/g
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+function deriveSlug(displayName: string): string {
+  const ascii = displayName.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  const slug = ascii.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  return slug.slice(0, 64) || 'entity'
+}
+
 function renderBody(body: string): string {
   return body.replace(TOKEN_RE, (match) => {
     let slug: string
+    let display: string
     let cssClass: string
-    if (match.startsWith('@'))       { slug = match.slice(1);      cssClass = 'ref-location' }
-    else if (match.startsWith('#'))  { slug = match.slice(1);      cssClass = 'ref-character' }
-    else if (match.startsWith('~'))  { slug = match.slice(1, -1);  cssClass = 'ref-item' }
-    else if (match.startsWith('?'))  { slug = match.slice(2, -2);  cssClass = 'ref-chapter' }
+    if (match.startsWith('@@'))      { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-location' }
+    else if (match.startsWith('##')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-character' }
+    else if (match.startsWith('~~')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-item' }
+    else if (match.startsWith('??')) { display = match.slice(2, -2); slug = display;              cssClass = 'ref-chapter' }
     else { return `<span class="ref-event">${escapeHtml(match)}</span>` }
-    return `<a class="ref-link ${cssClass}" data-slug="${slug}" href="#">${escapeHtml(match)}</a>`
+    return `<a class="ref-link ${cssClass}" data-slug="${slug}" href="#">${escapeHtml(display)}</a>`
   })
 }
 

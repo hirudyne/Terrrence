@@ -13,56 +13,48 @@ import { api } from './api'
 import { getState, setState } from './state'
 
 // ---------------------------------------------------------------------------
-// Token patterns (must match backend REF_PATTERNS)
+// Token patterns - must match backend REF_PATTERNS
+// @@display@@  ##display##  ~~display~~  ??slug??  !!trigger!!effect!!
 // ---------------------------------------------------------------------------
 
-// A "complete" token: ends with its closing delimiter or is a bare @/# slug
-// followed by a word boundary (space, punctuation, end-of-line).
-const TYPE_FOR_PREFIX: Record<string, string> = {
-  '@': 'location',
-  '#': 'character',
-  '~': 'item',
-  '?': 'chapter',
-}
+const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[a-zA-Z0-9_-]+\?\?)/g
 
-// Detect a just-completed token in new text inserted at a position.
-// Returns {slug, type} or null.
+// A token is "committed" when its closing delimiter has just been typed.
+// Returns { displayName, type } or null.
 function _detectCompletedToken(
-  _docBefore: string,
   docAfter: string,
   insertedAt: number,
   insertedText: string,
-): { slug: string; type: string } | null {
-  // Only trigger on whitespace or punctuation insertion
-  if (!/[\s.,;:!?)]/.test(insertedText)) return null
+): { displayName: string; type: string } | null {
+  // Only trigger on the closing character of a delimiter
+  const closingChars = new Set(['@', '#', '~', '?'])
+  if (!insertedText.split('').some(c => closingChars.has(c) || /\s/.test(c))) return null
 
-  // Check the character just before the insertion point for closing delimiters
-  // or scan backwards for an opening prefix
-  const before = docAfter.slice(Math.max(0, insertedAt - 80), insertedAt)
+  const before = docAfter.slice(Math.max(0, insertedAt - 120), insertedAt + insertedText.length)
 
-  // Try ~slug~ and ??slug??
-  const closedMatch = before.match(/~([a-zA-Z0-9_-]+)~$|\?\?([a-zA-Z0-9_-]+)\?\?$/)
-  if (closedMatch) {
-    const slug = closedMatch[1] ?? closedMatch[2]
-    const type = closedMatch[1] ? 'item' : 'chapter'
-    return { slug, type }
-  }
+  // @@display@@
+  const locMatch = before.match(/@@([^@]+)@@$/)
+  if (locMatch) return { displayName: locMatch[1].trim(), type: 'location' }
 
-  // Try @slug or #slug just before the whitespace/punctuation
-  const openMatch = before.match(/[@#]([a-zA-Z0-9_-]+)$/)
-  if (openMatch) {
-    const prefix = before[before.length - openMatch[0].length]
-    return { slug: openMatch[1], type: TYPE_FOR_PREFIX[prefix] ?? 'location' }
-  }
+  // ##display##
+  const charMatch = before.match(/##([^#]+)##$/)
+  if (charMatch) return { displayName: charMatch[1].trim(), type: 'character' }
+
+  // ~~display~~
+  const itemMatch = before.match(/~~([^~]+)~~$/)
+  if (itemMatch) return { displayName: itemMatch[1].trim(), type: 'item' }
+
+  // ??slug?? - display name is the slug for chapters
+  const chapMatch = before.match(/\?\?([a-zA-Z0-9_-]+)\?\?$/)
+  if (chapMatch) return { displayName: chapMatch[1].trim(), type: 'chapter' }
 
   return null
 }
 
+
 // ---------------------------------------------------------------------------
 // Token highlighting
 // ---------------------------------------------------------------------------
-
-const TOKEN_RE = /(@[a-zA-Z0-9_-]+|#[a-zA-Z0-9_-]+|~[a-zA-Z0-9_-]+~|!!(?:[^!]|![^!])*!!|\?\?[a-zA-Z0-9_-]+\?\?)/g
 
 const locationMark  = Decoration.mark({ class: 'cm-token-location' })
 const characterMark = Decoration.mark({ class: 'cm-token-character' })
@@ -70,11 +62,11 @@ const itemMark      = Decoration.mark({ class: 'cm-token-item' })
 const eventMark     = Decoration.mark({ class: 'cm-token-event' })
 const chapterMark   = Decoration.mark({ class: 'cm-token-chapter' })
 
-function markForToken(raw: string) {
-  if (raw.startsWith('@'))  return locationMark
-  if (raw.startsWith('#'))  return characterMark
-  if (raw.startsWith('~'))  return itemMark
-  if (raw.startsWith('?'))  return chapterMark
+function markForToken(raw: string): Decoration {
+  if (raw.startsWith('@@')) return locationMark
+  if (raw.startsWith('##')) return characterMark
+  if (raw.startsWith('~~')) return itemMark
+  if (raw.startsWith('??')) return chapterMark
   return eventMark
 }
 
@@ -93,9 +85,7 @@ const tokenHighlighter = ViewPlugin.fromClass(
         let m: RegExpExecArray | null
         TOKEN_RE.lastIndex = 0
         while ((m = TOKEN_RE.exec(text)) !== null) {
-          const start = from + m.index
-          const end   = start + m[0].length
-          builder.add(start, end, markForToken(m[0]))
+          builder.add(from + m.index, from + m.index + m[0].length, markForToken(m[0]))
         }
       }
       return builder.finish()
@@ -105,7 +95,7 @@ const tokenHighlighter = ViewPlugin.fromClass(
 )
 
 // ---------------------------------------------------------------------------
-// Autocomplete
+// Autocomplete - suggest existing entity display names after opening delimiter
 // ---------------------------------------------------------------------------
 
 let _entityCache: { slug: string; type: string; display_name: string }[] = []
@@ -115,16 +105,25 @@ export async function refreshEntityCache(projectSlug: string) {
 }
 
 function terrrenceComplete(context: CompletionContext): CompletionResult | null {
-  const word = context.matchBefore(/[@#~?][a-zA-Z0-9_-]*|\?\?[a-zA-Z0-9_-]*/)
+  // Match after opening delimiter: @@ ## ~~ ??
+  const word = context.matchBefore(/(@@|##|~~|\?\?)[^@#~?]*/)
   if (!word || (word.from === word.to && !context.explicit)) return null
-  const prefix = word.text[0]
-  const typeMap: Record<string, string> = { '@': 'location', '#': 'character', '~': 'item', '?': 'chapter' }
+
+  const prefix = word.text.slice(0, 2)
+  const typeMap: Record<string, string> = {
+    '@@': 'location', '##': 'character', '~~': 'item', '??': 'chapter',
+  }
+  const closing: Record<string, string> = {
+    '@@': '@@', '##': '##', '~~': '~~', '??': '??',
+  }
   const targetType = typeMap[prefix]
+  if (!targetType) return null
+
   const options = _entityCache
-    .filter(e => !targetType || e.type === targetType)
+    .filter(e => e.type === targetType)
     .map(e => ({
-      label: prefix + e.slug + (prefix === '~' ? '~' : prefix === '?' ? '??' : ''),
-      detail: e.display_name,
+      label: prefix + e.display_name + closing[prefix],
+      detail: e.slug,
       type: 'variable' as const,
     }))
   return { from: word.from, options }
@@ -156,26 +155,23 @@ export function getOrCreateEditor(
   const appState = getState()
   const project  = appState.projectSlug!
 
-  const ydoc    = new Y.Doc()
-  const ytext   = ydoc.getText('codemirror')
-  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsBase  = `${wsProto}//${location.host}/ws/yjs`
+  const ydoc     = new Y.Doc()
+  const ytext    = ydoc.getText('codemirror')
+  const wsProto  = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsBase   = `${wsProto}//${location.host}/ws/yjs`
   const provider = new WebsocketProvider(wsBase, `${project}/${entitySlug}`, ydoc)
 
   if (ytext.toString() === '' && initialContent) {
     ydoc.transact(() => ytext.insert(0, initialContent))
   }
 
-  // Per-space save: track last saved content to avoid redundant PATCHes
   let lastSaved = initialContent
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
   async function _save(content: string) {
     if (content === lastSaved) return
     lastSaved = content
-    try {
-      await api.updateEntity(project, entitySlug, { body: content })
-    } catch (_) { /* non-fatal */ }
+    try { await api.updateEntity(project, entitySlug, { body: content }) } catch (_) {}
   }
 
   const extensions = [
@@ -201,38 +197,35 @@ export function getOrCreateEditor(
       const content = update.state.doc.toString()
       onChange?.(content)
 
-      // Per-space save: save immediately on whitespace insertion
+      // Per-space save
       let spaceInserted = false
       update.transactions.forEach((tr: Transaction) => {
-        tr.changes.iterChanges((_fromA, _toA, _fromB, _toB, inserted) => {
-          if (/\s/.test(inserted.toString())) spaceInserted = true
+        tr.changes.iterChanges((_fA, _tA, _fB, _tB, ins) => {
+          if (/\s/.test(ins.toString())) spaceInserted = true
         })
       })
       if (spaceInserted) {
         _save(content)
       } else {
-        // 1s debounce fallback
         if (debounceTimer) clearTimeout(debounceTimer)
         debounceTimer = setTimeout(() => _save(content), 1000)
       }
 
-      // Auto-stub: detect completed tokens and ensure entities exist
+      // Auto-stub: detect completed tokens
       update.transactions.forEach((tr: Transaction) => {
         if (!tr.docChanged) return
-        tr.changes.iterChanges((_fromA, _toA, fromB, _toB, inserted) => {
+        tr.changes.iterChanges((_fA, _tA, fromB, _tB, inserted) => {
           const insertedText = inserted.toString()
-          const docAfter  = update.state.doc.toString()
-          const result = _detectCompletedToken('', docAfter, fromB, insertedText)
+          const docAfter = update.state.doc.toString()
+          const result = _detectCompletedToken(docAfter, fromB, insertedText)
           if (!result) return
-          const { slug, type } = result
-          api.ensureEntity(project, slug, type).then(entity => {
-            if (entity.created) {
-              // new stub - refresh cache and show in preview
-              refreshEntityCache(project)
-            }
-            // always show the referenced entity in preview
-            setState({ previewEntitySlug: entity.slug })
-          }).catch(() => { /* non-fatal */ })
+          const { displayName, type } = result
+          api.ensureEntity(project, displayName, type)
+            .then(entity => {
+              if (entity.created) refreshEntityCache(project)
+              setState({ previewEntitySlug: entity.slug })
+            })
+            .catch(() => {})
         })
       })
     }),

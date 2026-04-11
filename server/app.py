@@ -188,6 +188,17 @@ SLUG_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
 PROJECTS_ROOT = Path(os.environ.get("TERRRENCE_PROJECTS", "/workspace/projects"))
 
 
+def _derive_slug(display_name: str) -> str:
+    """Derive a filesystem-safe slug from a display name.
+    'Sholver\'s Mum' -> 'sholvers_mum', 'Old Barn!' -> 'old_barn'
+    """
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", display_name)
+    ascii_str = nfkd.encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r'[^a-z0-9]+', '_', ascii_str.lower()).strip('_')
+    return slug[:64] or "entity"
+
+
 def _slug_valid(slug: str) -> bool:
     return bool(SLUG_RE.match(slug)) and len(slug) <= 64
 
@@ -302,11 +313,11 @@ import frontmatter as fm
 
 ENTITY_TYPES = {"location", "character", "item", "event", "game", "chapter"}
 REF_PATTERNS = [
-    (re.compile(r'@([a-z0-9_-]+)'),          "location"),
-    (re.compile(r'#([a-z0-9_-]+)'),          "character"),
-    (re.compile(r'~([a-z0-9_-]+)~'),         "item"),
+    (re.compile(r'@@([^@]+)@@'),             "location"),
+    (re.compile(r'##([^#]+)##'),             "character"),
+    (re.compile(r'~~([^~]+)~~'),             "item"),
     (re.compile(r'!!([^!]+)!!([^!]+)!!'),    "event"),
-    (re.compile(r'\?\?([a-z0-9_-]+)\?\?'),  "chapter"),
+    (re.compile(r'\?\?([a-zA-Z0-9_-]+)\?\?'),  "chapter"),
 ]
 
 
@@ -354,19 +365,25 @@ def _read_entity_file(project_slug: str, entity_slug: str) -> fm.Post:
 
 
 def _extract_refs(body_text: str) -> list[tuple[str, str]]:
-    """Return list of (slug, type) tuples from prose references."""
+    """Return list of (slug, type) tuples from prose references.
+    Slugs are derived from the display text inside the delimiters.
+    """
     refs = []
-    # simple single-token patterns: @location #character ~item~ ??chapter??
+    # @@display@@  ##display##  ~~display~~  ??slug??
     for pattern, ref_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4]]:
         for m in pattern.finditer(body_text):
-            refs.append((m.group(1), ref_type))
-    # event: !!trigger!!effect!! - also scan inside for nested refs
+            display = m.group(1).strip()
+            slug = display if ref_type == "chapter" else _derive_slug(display)
+            refs.append((slug, ref_type))
+    # event: !!trigger!!effect!! - scan inside for nested refs
     event_pat = REF_PATTERNS[3][0]
     for m in event_pat.finditer(body_text):
         for part in (m.group(1), m.group(2)):
             for inner_pat, inner_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4]]:
                 for im in inner_pat.finditer(part):
-                    refs.append((im.group(1), inner_type))
+                    display = im.group(1).strip()
+                    slug = display if inner_type == "chapter" else _derive_slug(display)
+                    refs.append((slug, inner_type))
     return refs
 
 
@@ -539,7 +556,7 @@ class UpdateEntityBody(BaseModel):
 
 
 class EnsureEntityBody(BaseModel):
-    slug: str
+    display_name: str
     type: str
 
 
@@ -552,19 +569,22 @@ def ensure_entity(
     """Return existing entity or create a stub. Used by the editor for inline token creation."""
     api_key_id, _ = _require_session(session)
     project = _project_for_session(project_slug, api_key_id)
-    if not _slug_valid(body.slug):
-        raise HTTPException(status_code=400, detail="invalid slug")
+    display_name = body.display_name.strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="empty display name")
     if body.type not in ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="invalid type")
+    slug = display_name if body.type == "chapter" else _derive_slug(display_name)
+    if not slug or not _slug_valid(slug):
+        raise HTTPException(status_code=400, detail="could not derive valid slug")
     with db() as conn:
         existing = conn.execute(
             "SELECT slug, type, display_name, parent_id FROM entities WHERE project_id = ? AND slug = ?",
-            (project["id"], body.slug),
+            (project["id"], slug),
         ).fetchone()
         if existing:
             return {"slug": existing["slug"], "type": existing["type"],
                     "display_name": existing["display_name"], "created": False}
-        # determine parent for chapters
         parent_id = None
         if body.type == "chapter":
             game_row = conn.execute(
@@ -575,11 +595,11 @@ def ensure_entity(
                 parent_id = game_row["id"]
         cur = conn.execute(
             "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (?, ?, ?, ?, ?)",
-            (project["id"], body.slug, body.type, body.slug, parent_id),
+            (project["id"], slug, body.type, display_name, parent_id),
         )
         entity_id = cur.lastrowid
-    _write_entity_file(project_slug, body.slug, body.slug, body.type, "")
-    return {"slug": body.slug, "type": body.type, "display_name": body.slug, "created": True}
+    _write_entity_file(project_slug, slug, display_name, body.type, "")
+    return {"slug": slug, "type": body.type, "display_name": display_name, "created": True}
 
 
 @app.patch("/projects/{project_slug}/entities/{entity_slug}")
