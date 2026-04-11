@@ -10,7 +10,7 @@ const TYPE_PREFIX: Record<string, string> = {
   chapter:   '??',
 }
 
-const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[a-zA-Z0-9_-]+\?\?)/g
+const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?)/g
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -30,7 +30,7 @@ function renderBody(body: string): string {
     if (match.startsWith('@@'))      { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-location' }
     else if (match.startsWith('##')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-character' }
     else if (match.startsWith('~~')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-item' }
-    else if (match.startsWith('??')) { display = match.slice(2, -2); slug = display;              cssClass = 'ref-chapter' }
+    else if (match.startsWith('??')) { display = match.slice(2, -2); slug = deriveSlug(display);  cssClass = 'ref-chapter' }
     else { return `<span class="ref-event">${escapeHtml(match)}</span>` }
     return `<a class="ref-link ${cssClass}" data-slug="${slug}" href="#">${escapeHtml(display)}</a>`
   })

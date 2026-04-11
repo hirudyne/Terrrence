@@ -325,7 +325,7 @@ REF_PATTERNS = [
     (re.compile(r'##([^#]+)##'),             "character"),
     (re.compile(r'~~([^~]+)~~'),             "item"),
     (re.compile(r'!!([^!]+)!!([^!]+)!!'),    "event"),
-    (re.compile(r'\?\?([a-zA-Z0-9_-]+)\?\?'),  "chapter"),
+    (re.compile(r'\?\?([^?]+)\?\?'),           "chapter"),
 ]
 
 
@@ -381,7 +381,7 @@ def _extract_refs(body_text: str) -> list[tuple[str, str]]:
     for pattern, ref_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4]]:
         for m in pattern.finditer(body_text):
             display = m.group(1).strip()
-            slug = display if ref_type == "chapter" else _derive_slug(display)
+            slug = _derive_slug(display)
             refs.append((slug, ref_type))
     # event: !!trigger!!effect!! - scan inside for nested refs
     event_pat = REF_PATTERNS[3][0]
@@ -390,7 +390,7 @@ def _extract_refs(body_text: str) -> list[tuple[str, str]]:
             for inner_pat, inner_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4]]:
                 for im in inner_pat.finditer(part):
                     display = im.group(1).strip()
-                    slug = display if inner_type == "chapter" else _derive_slug(display)
+                    slug = _derive_slug(display)
                     refs.append((slug, inner_type))
     return refs
 
@@ -583,7 +583,7 @@ def ensure_entity(
         raise HTTPException(status_code=400, detail="empty display name")
     if body.type not in ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="invalid type")
-    slug = display_name if body.type == "chapter" else _derive_slug(display_name)
+    slug = _derive_slug(display_name)
     if not slug or not _slug_valid(slug):
         raise HTTPException(status_code=400, detail="could not derive valid slug")
     with db() as conn:

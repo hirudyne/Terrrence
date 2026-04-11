@@ -17,7 +17,7 @@ import { getState, setState } from './state'
 // @@display@@  ##display##  ~~display~~  ??slug??  !!trigger!!effect!!
 // ---------------------------------------------------------------------------
 
-const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[a-zA-Z0-9_-]+\?\?)/g
+const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?)/g
 
 // A token is "committed" when its closing delimiter has just been typed.
 // Returns { displayName, type } or null.
@@ -44,8 +44,8 @@ function _detectCompletedToken(
   const itemMatch = before.match(/~~([^~]+)~~$/)
   if (itemMatch) return { displayName: itemMatch[1].trim(), type: 'item' }
 
-  // ??slug?? - display name is the slug for chapters
-  const chapMatch = before.match(/\?\?([a-zA-Z0-9_-]+)\?\?$/)
+  // ??display name?? - chapters now also use derived slugs
+  const chapMatch = before.match(/\?\?([^?]+)\?\?$/)
   if (chapMatch) return { displayName: chapMatch[1].trim(), type: 'chapter' }
 
   return null
