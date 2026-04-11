@@ -395,16 +395,46 @@ def _extract_refs(body_text: str) -> list[tuple[str, str]]:
     return refs
 
 
-def _rebuild_refs(project_id: int, entity_id: int, body_text: str):
+def _rebuild_refs(project_id: int, entity_id: int, body_text: str,
+                  entity_type: str = "", project_slug: str = "") -> list[str]:
+    """Rebuild entity_refs for entity_id from body_text.
+    If entity_type and project_slug are provided, auto-stubs unresolved refs.
+    Returns list of newly created stub slugs.
+    """
     refs = _extract_refs(body_text)
+    new_stubs: list[str] = []
+
     with db() as conn:
         conn.execute("DELETE FROM entity_refs WHERE src_entity_id = ?", (entity_id,))
         counts: dict[tuple, int] = {}
-        for slug, _ in refs:
+        for slug, ref_type in refs:
             target = conn.execute(
                 "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
                 (project_id, slug),
             ).fetchone()
+            if not target and project_slug:
+                # Auto-stub: skip events (require chapter context) and game type
+                if ref_type in ("event", "game"):
+                    continue
+                # For chapters we need a game entity parent
+                parent_id = None
+                if ref_type == "chapter":
+                    game_row = conn.execute(
+                        "SELECT id FROM entities WHERE project_id = ? AND type = 'game'",
+                        (project_id,),
+                    ).fetchone()
+                    if game_row:
+                        parent_id = game_row["id"]
+                    else:
+                        continue
+                cur = conn.execute(
+                    "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (?,?,?,?,?)",
+                    (project_id, slug, ref_type, slug, parent_id),
+                )
+                stub_id = cur.lastrowid
+                target = conn.execute("SELECT id FROM entities WHERE id=?", (stub_id,)).fetchone()
+                new_stubs.append(slug)
+                _write_entity_file(project_slug, slug, slug, ref_type, "")
             if target:
                 key = (entity_id, target["id"])
                 counts[key] = counts.get(key, 0) + 1
@@ -418,6 +448,7 @@ def _rebuild_refs(project_id: int, entity_id: int, body_text: str):
                 """,
                 (src, tgt, cnt),
             )
+    return new_stubs
 
 
 class CreateEntityBody(BaseModel):
@@ -482,7 +513,8 @@ def create_entity(
         )
         entity_id = cur.lastrowid
     _write_entity_file(project_slug, body.slug, body.display_name.strip(), body.type, body.body)
-    _rebuild_refs(project["id"], entity_id, body.body)
+    _rebuild_refs(project["id"], entity_id, body.body,
+                  entity_type=body.type, project_slug=project_slug)
     return {"slug": body.slug, "display_name": body.display_name.strip(), "type": body.type, "parent_id": parent_id}
 
 
@@ -657,7 +689,8 @@ def update_entity(
             "UPDATE entities SET display_name = ? WHERE id = ?",
             (new_display_name, entity["id"]),
         )
-    _rebuild_refs(project["id"], entity["id"], new_body)
+    _rebuild_refs(project["id"], entity["id"], new_body,
+                  entity_type=entity["type"], project_slug=project_slug)
     return {"slug": entity_slug, "display_name": new_display_name, "type": entity["type"]}
 
 
