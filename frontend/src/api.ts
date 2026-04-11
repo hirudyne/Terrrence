@@ -42,6 +42,7 @@ export interface Asset {
 
 export const api = {
   health: () => req<{ ok: boolean }>('GET', '/health'),
+  version: () => req<{ version: string }>('GET', '/version'),
   login: (api_key: string) => req<{ ok: boolean }>('POST', '/login', { api_key }),
   logout: () => req<{ ok: boolean }>('POST', '/logout'),
   whoami: () => req<{ label: string }>('GET', '/whoami'),

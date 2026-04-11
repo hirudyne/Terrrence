@@ -120,9 +120,17 @@ def _set_session_cookie(response: Response, session_id: str):
 # Routes - health / auth
 # ---------------------------------------------------------------------------
 
+_VERSION = (Path(__file__).parent.parent / "VERSION").read_text().strip()
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "terrrence"}
+    return {"ok": True, "service": "terrrence", "version": _VERSION}
+
+
+@app.get("/version")
+def version():
+    return {"version": _VERSION}
 
 
 class LoginBody(BaseModel):

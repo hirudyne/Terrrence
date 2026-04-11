@@ -22,13 +22,25 @@ export class NavPane {
   private entities: Entity[] = []
   private selectedType: string = 'location'
 
+  private _version: string = ''
+
   constructor(container: HTMLElement) {
     this.el = container
     this.el.className = 'nav-pane'
     subscribe(state => {
       if (state.projectSlug) this.load(state.projectSlug)
     })
+    api.version().then(v => { this._version = v.version; this._renderVersionLabel() }).catch(() => {})
     this._render()
+  }
+
+  private _renderVersionLabel() {
+    const existing = this.el.querySelector('.nav-version')
+    if (existing) { existing.textContent = `v${this._version}`; return }
+    const label = document.createElement('div')
+    label.className = 'nav-version'
+    label.textContent = `v${this._version}`
+    this.el.appendChild(label)
   }
 
   async load(projectSlug: string) {
@@ -97,6 +109,8 @@ export class NavPane {
     } else {
       this.el.appendChild(this._tabView())
     }
+
+    if (this._version) this._renderVersionLabel()
   }
 
   private _projectSelector(): HTMLElement {

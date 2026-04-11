@@ -16,3 +16,4 @@ frontend/dist/
 
 # Logs
 *.log
+.secrets

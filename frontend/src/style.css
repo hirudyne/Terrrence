@@ -227,3 +227,15 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
   outline: none;
 }
 .tag-input:focus { border-bottom-color: var(--accent); }
+
+/* ---- Version label ---- */
+.nav-version {
+  margin-top: auto;
+  padding: 0.5rem 0.4rem 0.25rem;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  font-family: monospace;
+  user-select: none;
+}
+/* Make nav-pane a flex column so margin-top:auto on version pushes it to bottom */
+.nav-pane { display: flex; flex-direction: column; }
