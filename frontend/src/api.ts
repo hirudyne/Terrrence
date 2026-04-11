@@ -29,6 +29,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw Object.assign(new Error(err.detail ?? res.statusText), { status: res.status })
   }
+  if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T
   return res.json() as Promise<T>
 }
 
