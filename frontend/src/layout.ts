@@ -38,7 +38,9 @@ export function initLayout(appEl: HTMLElement): void {
   const layout = new GoldenLayout(appEl)
 
   layout.registerComponentFactoryFunction('nav', (container) => {
-    new NavPane(container.element as HTMLElement)
+    const nav = new NavPane(container.element as HTMLElement)
+    // Expose globally so editor can optimistically add entities
+    ;(window as any)._terrrenceNav = nav
   })
 
   layout.registerComponentFactoryFunction('editor', (container) => {

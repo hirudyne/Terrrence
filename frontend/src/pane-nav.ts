@@ -48,6 +48,14 @@ export class NavPane {
     this._render()
   }
 
+  // Add an entity to the local cache immediately without waiting for a server round-trip.
+  addEntityLocal(entity: { slug: string; type: string; display_name: string; parent_slug: string | null }) {
+    if (!this.entities.find(e => e.slug === entity.slug)) {
+      this.entities = [...this.entities, entity]
+      this._render()
+    }
+  }
+
   private _render() {
     const state = getState()
     this.el.innerHTML = ''
@@ -220,7 +228,12 @@ export class NavPane {
     nameSpan.title = entity.slug
     li.appendChild(nameSpan)
 
-    li.onclick = () => setState({ activeEntitySlug: entity.slug })
+    li.onclick = (e) => {
+      // Only open in editor if click was not on the actions area
+      if (!(e.target as HTMLElement).closest('.nav-entity-actions')) {
+        setState({ activeEntitySlug: entity.slug })
+      }
+    }
 
     const actions = document.createElement('span')
     actions.className = 'nav-entity-actions'
@@ -334,10 +347,17 @@ export class NavPane {
         const name = nameInput.value.trim()
         if (!slug || !name) { err('Slug and display name required.'); return }
         try {
-          await api.createEntity(state.projectSlug!, { slug, display_name: name, type })
-          await this.load(state.projectSlug!)
+          const entity = await api.createEntity(state.projectSlug!, { slug, display_name: name, type })
+          this.addEntityLocal({
+            slug: entity.slug,
+            type: entity.type,
+            display_name: entity.display_name,
+            parent_slug: type === 'chapter' ? 'game' : null,
+          })
           setState({ activeEntitySlug: slug })
           close()
+          // Background sync to catch any server-side differences
+          this.load(state.projectSlug!).catch(() => {})
         } catch (e: any) { err(e.message) }
       })
     })
