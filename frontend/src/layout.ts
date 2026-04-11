@@ -53,4 +53,11 @@ export function initLayout(appEl: HTMLElement): void {
 
   layout.loadLayout(LAYOUT_CONFIG)
   layout.init()
+
+  // Recalculate pane sizes when the window is resized
+  window.addEventListener('resize', () => {
+    const w = appEl.offsetWidth
+    const h = appEl.offsetHeight
+    layout.updateSize(w, h)
+  })
 }

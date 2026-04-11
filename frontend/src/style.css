@@ -96,8 +96,8 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 .editor-empty { padding: 2rem; color: var(--text-dim); font-size: 0.9rem; }
 
 /* ---- CodeMirror ---- */
-.cm-editor { height: 100%; background: var(--bg2) !important; }
-.cm-editor .cm-content { color: var(--text); }
+.cm-editor { height: 100%; background: var(--bg2) !important; overflow: hidden; }
+.cm-editor .cm-content { color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
 .cm-editor .cm-gutters { background: var(--bg) !important; border-right: 1px solid var(--border) !important; color: var(--text-dim); }
 .cm-editor .cm-activeLine { background: rgba(255,255,255,0.03) !important; }
 .cm-editor .cm-cursor { border-left-color: var(--accent) !important; }
