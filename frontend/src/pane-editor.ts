@@ -23,12 +23,20 @@ export class EditorPane {
     this.editorArea.className = 'editor-area'
     this.el.appendChild(this.editorArea)
 
+    let _lastActive: string | null = null
+    let _lastProject: string | null = null
     subscribe(state => {
-      if (state.activeEntitySlug && state.projectSlug) {
-        this._openEntity(state.activeEntitySlug)
-      }
       if (!state.projectSlug) {
+        _lastActive = null
+        _lastProject = null
         this._showNoProject()
+        return
+      }
+      // Only act when activeEntitySlug or projectSlug actually changes
+      if (state.activeEntitySlug !== _lastActive || state.projectSlug !== _lastProject) {
+        _lastActive = state.activeEntitySlug
+        _lastProject = state.projectSlug
+        if (state.activeEntitySlug) this._openEntity(state.activeEntitySlug)
       }
     })
 
@@ -43,15 +51,19 @@ export class EditorPane {
     const state = getState()
     if (!state.projectSlug) return
 
+    const alreadyActive = this.activeTab === slug
+
     if (!this.openTabs.includes(slug)) {
       this.openTabs.push(slug)
     }
     this.activeTab = slug
     this._renderTabBar()
-    await this._mountEditor(slug)
 
-    // refresh autocomplete cache
-    refreshEntityCache(state.projectSlug)
+    // Only remount if switching to a different entity
+    if (!alreadyActive) {
+      await this._mountEditor(slug)
+      refreshEntityCache(state.projectSlug)
+    }
   }
 
   private _renderTabBar() {
