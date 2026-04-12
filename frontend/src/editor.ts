@@ -17,7 +17,7 @@ import { getState, setState } from './state'
 // @@display@@  ##display##  ~~display~~  ??slug??  !!trigger!!effect!!
 // ---------------------------------------------------------------------------
 
-const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?)/g
+const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?|\u201c[^\u201c\u201d]+\u201d)/g
 
 // A token is "committed" when its closing delimiter has just been typed.
 // Returns { displayName, type } or null.
@@ -27,7 +27,7 @@ function _detectCompletedToken(
   insertedText: string,
 ): { displayName: string; type: string } | null {
   // Only trigger on the closing character of a delimiter
-  const closingChars = new Set(['@', '#', '~', '?'])
+  const closingChars = new Set(['@', '#', '~', '?', '\u201d'])
   if (!insertedText.split('').some(c => closingChars.has(c) || /\s/.test(c))) return null
 
   const before = docAfter.slice(Math.max(0, insertedAt - 120), insertedAt + insertedText.length)
@@ -44,9 +44,13 @@ function _detectCompletedToken(
   const itemMatch = before.match(/~~([^~]+)~~$/)
   if (itemMatch) return { displayName: itemMatch[1].trim(), type: 'item' }
 
-  // ??display name?? - chapters now also use derived slugs
+  // ??display name??
   const chapMatch = before.match(/\?\?([^?]+)\?\?$/)
   if (chapMatch) return { displayName: chapMatch[1].trim(), type: 'chapter' }
+
+  // “conversation”
+  const convMatch = before.match(/\u201c([^\u201c\u201d]+)\u201d$/)
+  if (convMatch) return { displayName: convMatch[1].trim(), type: 'conversation' }
 
   return null
 }
@@ -60,13 +64,15 @@ const locationMark  = Decoration.mark({ class: 'cm-token-location' })
 const characterMark = Decoration.mark({ class: 'cm-token-character' })
 const itemMark      = Decoration.mark({ class: 'cm-token-item' })
 const eventMark     = Decoration.mark({ class: 'cm-token-event' })
-const chapterMark   = Decoration.mark({ class: 'cm-token-chapter' })
+const chapterMark      = Decoration.mark({ class: 'cm-token-chapter' })
+const conversationMark = Decoration.mark({ class: 'cm-token-conversation' })
 
 function markForToken(raw: string): Decoration {
   if (raw.startsWith('@@')) return locationMark
   if (raw.startsWith('##')) return characterMark
   if (raw.startsWith('~~')) return itemMark
   if (raw.startsWith('??')) return chapterMark
+  if (raw.startsWith('“')) return conversationMark
   return eventMark
 }
 
@@ -106,15 +112,15 @@ export async function refreshEntityCache(projectSlug: string) {
 
 function terrrenceComplete(context: CompletionContext): CompletionResult | null {
   // Match after opening delimiter: @@ ## ~~ ??
-  const word = context.matchBefore(/(@@|##|~~|\?\?)[^@#~?]*/)
+  const word = context.matchBefore(/(@@|##|~~|\?\?|\u201c)[^@#~?\u201c\u201d]*/) 
   if (!word || (word.from === word.to && !context.explicit)) return null
 
-  const prefix = word.text.slice(0, 2)
+  const prefix = word.text.slice(0, 1) === '\u201c' ? '\u201c' : word.text.slice(0, 2)
   const typeMap: Record<string, string> = {
-    '@@': 'location', '##': 'character', '~~': 'item', '??': 'chapter',
+    '@@': 'location', '##': 'character', '~~': 'item', '??': 'chapter', '\u201c': 'conversation',
   }
   const closing: Record<string, string> = {
-    '@@': '@@', '##': '##', '~~': '~~', '??': '??',
+    '@@': '@@', '##': '##', '~~': '~~', '??': '??', '\u201c': '\u201d',
   }
   const targetType = typeMap[prefix]
   if (!targetType) return null
@@ -219,7 +225,8 @@ export function getOrCreateEditor(
       '.cm-token-character': { color: '#f4a261', fontWeight: 'bold' },
       '.cm-token-item':      { color: '#a8dadc', fontWeight: 'bold' },
       '.cm-token-event':     { color: '#e9c46a', fontWeight: 'bold' },
-      '.cm-token-chapter':   { color: '#c77dff', fontWeight: 'bold' },
+      '.cm-token-chapter':      { color: '#c77dff', fontWeight: 'bold' },
+      '.cm-token-conversation': { color: '#ff9eb5', fontWeight: 'bold' },
     }),
     EditorView.updateListener.of((update: ViewUpdate) => {
       if (!update.docChanged) return
@@ -251,8 +258,9 @@ export function getOrCreateEditor(
           const { displayName, type } = result
           const nav = (window as any)._terrrenceNav
           // Events only auto-create when typed inside a chapter document
-          const parentSlug = (type === 'event') ? entitySlug : undefined
+          const parentSlug = (type === 'event' || type === 'conversation') ? entitySlug : undefined
           if (type === 'event' && entityType !== 'chapter') return
+          if (type === 'conversation' && entityType !== 'character') return
           api.ensureEntity(project, displayName, type, parentSlug)
             .then(entity => {
               if (entity.blocked || !entity.slug) return

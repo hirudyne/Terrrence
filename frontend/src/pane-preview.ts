@@ -2,15 +2,16 @@ import { api, EntityDetail, Asset } from './api'
 import { getState, setState, subscribe } from './state'
 
 const TYPE_PREFIX: Record<string, string> = {
-  location:  '@',
-  character: '#',
-  item:      '~',
-  event:     '!!',
-  game:      'G',
-  chapter:   'Ch',
+  location:     '@',
+  character:    '#',
+  item:         '~',
+  event:        '!!',
+  game:         'G',
+  chapter:      'Ch',
+  conversation: '“”',
 }
 
-const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?)/g
+const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?|\u201c[^\u201c\u201d]+\u201d)/g
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -34,7 +35,8 @@ function renderBody(body: string): string {
     if (match.startsWith('@@'))      { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-location' }
     else if (match.startsWith('##')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-character' }
     else if (match.startsWith('~~')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-item' }
-    else if (match.startsWith('??')) { display = match.slice(2, -2); slug = deriveSlug(display, 'chapter'); cssClass = 'ref-chapter' }
+    else if (match.startsWith('??'))    { display = match.slice(2, -2); slug = deriveSlug(display, 'chapter'); cssClass = 'ref-chapter' }
+    else if (match.startsWith('“')) { display = match.slice(1, -1); slug = deriveSlug(display); cssClass = 'ref-conversation' }
     else { return `<span class="ref-event">${escapeHtml(match)}</span>` }
     return `<a class="ref-link ${cssClass}" data-slug="${slug}" href="#">${escapeHtml(display)}</a>`
   })

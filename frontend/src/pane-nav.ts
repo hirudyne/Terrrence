@@ -4,16 +4,17 @@ import { showLogin } from './login'
 
 type ViewMode = 'tree' | 'tabs'
 
-const ALL_TYPES = ['game', 'chapter', 'location', 'character', 'item', 'event'] as const
+const ALL_TYPES = ['game', 'chapter', 'location', 'character', 'item', 'event', 'conversation'] as const
 const TYPE_PREFIX: Record<string, string> = {
-  game:      'G',
-  chapter:   '??',
-  location:  '@@',
-  character: '##',
-  item:      '~~',
-  event:     '!!',
+  game:         'G',
+  chapter:      '??',
+  location:     '@@',
+  character:    '##',
+  item:         '~~',
+  event:        '!!',
+  conversation: '“”',
 }
-const CREATABLE_TYPES = ['chapter', 'location', 'character', 'item', 'event'] as const
+const CREATABLE_TYPES = ['chapter', 'location', 'character', 'item', 'event', 'conversation'] as const
 
 // SVG icons
 const EYE_ICON = `<svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`
@@ -175,8 +176,8 @@ export class NavPane {
       ul.appendChild(this._gameGroup(gameEntity, chapters))
     }
 
-    // Locations, characters, items (flat groups)
-    for (const type of (['location', 'character', 'item'] as const)) {
+    // Locations, items (flat groups)
+    for (const type of (['location', 'item'] as const)) {
       const group = this.entities.filter(e => e.type === type)
       const li = document.createElement('li')
       li.className = 'nav-group'
@@ -189,6 +190,22 @@ export class NavPane {
       li.appendChild(children)
       ul.appendChild(li)
     }
+
+    // Characters with nested conversations
+    const characters = this.entities.filter(e => e.type === 'character')
+    const charLi = document.createElement('li')
+    charLi.className = 'nav-group'
+    const charLabel = document.createElement('span')
+    charLabel.className = 'nav-group-label'
+    charLabel.textContent = `## characters (${characters.length})`
+    charLi.appendChild(charLabel)
+    const charList = document.createElement('ul')
+    for (const char of characters) {
+      const convs = this.entities.filter(e => e.type === 'conversation' && e.parent_slug === char.slug)
+      charList.appendChild(this._characterGroup(char, convs))
+    }
+    charLi.appendChild(charList)
+    ul.appendChild(charLi)
     return ul
   }
 
@@ -222,6 +239,38 @@ export class NavPane {
       chapList.appendChild(this._chapterGroup(chapter, events))
     }
     li.appendChild(chapList)
+    return li
+  }
+
+  private _characterGroup(character: Entity, conversations: Entity[]): HTMLElement {
+    const li = document.createElement('li')
+    li.className = 'nav-chapter-group'
+
+    const row = document.createElement('div')
+    row.className = 'nav-entity-item'
+    const state = getState()
+    if (character.slug === state.activeEntitySlug) row.classList.add('active')
+
+    const name = document.createElement('span')
+    name.className = 'nav-entity-name'
+    name.textContent = character.display_name
+    name.title = character.slug
+    name.onclick = () => setState({ activeEntitySlug: character.slug })
+    row.appendChild(name)
+
+    const actions = document.createElement('span')
+    actions.className = 'nav-entity-actions'
+    actions.appendChild(this._iconBtn(EYE_ICON, 'Open in preview', () => setState({ previewEntitySlug: character.slug })))
+    actions.appendChild(this._iconBtn(TRASH_ICON, 'Delete', () => this._confirmDelete(character), true))
+    row.appendChild(actions)
+    li.appendChild(row)
+
+    if (conversations.length > 0) {
+      const convList = document.createElement('ul')
+      convList.className = 'nav-event-list'
+      for (const conv of conversations) convList.appendChild(this._entityItem(conv))
+      li.appendChild(convList)
+    }
     return li
   }
 
@@ -373,6 +422,7 @@ export class NavPane {
     if (!state.projectSlug) return
     const hasGame = this.entities.some(e => e.type === 'game')
     const chapters = this.entities.filter(e => e.type === 'chapter')
+    const characters = this.entities.filter(e => e.type === 'character')
 
     const modal = this._modal('New entity', (form, close, err) => {
       // Type dropdown
@@ -393,7 +443,7 @@ export class NavPane {
       }
       form.appendChild(typeSelect)
 
-      // Chapter selector - shown only when type = event
+      // Chapter selector - shown when type = event
       const chapterRow = document.createElement('div')
       chapterRow.style.display = 'none'
       const chapterLabel = document.createElement('label')
@@ -412,7 +462,6 @@ export class NavPane {
           const opt = document.createElement('option')
           opt.value = ch.slug
           opt.textContent = ch.display_name
-          // Pre-select if a chapter is currently open in editor
           if (ch.slug === state.activeEntitySlug) opt.selected = true
           chapterSelect.appendChild(opt)
         }
@@ -420,11 +469,42 @@ export class NavPane {
       chapterRow.appendChild(chapterSelect)
       form.appendChild(chapterRow)
 
-      typeSelect.onchange = () => {
-        chapterRow.style.display = typeSelect.value === 'event' ? 'flex' : 'none'
+      // Character selector - shown when type = conversation
+      const charRow = document.createElement('div')
+      charRow.style.display = 'none'
+      const charRowLabel = document.createElement('label')
+      charRowLabel.className = 'modal-field-label'
+      charRowLabel.textContent = 'Parent character'
+      charRow.appendChild(charRowLabel)
+      const charSelect = document.createElement('select')
+      charSelect.className = 'modal-select'
+      if (characters.length === 0) {
+        const opt = document.createElement('option')
+        opt.textContent = 'No characters yet - create a character first'
+        opt.disabled = true
+        charSelect.appendChild(opt)
+      } else {
+        for (const ch of characters) {
+          const opt = document.createElement('option')
+          opt.value = ch.slug
+          opt.textContent = ch.display_name
+          if (ch.slug === state.activeEntitySlug) opt.selected = true
+          charSelect.appendChild(opt)
+        }
+      }
+      charRow.appendChild(charSelect)
+      form.appendChild(charRow)
+
+      const showParentRow = (type: string) => {
+        chapterRow.style.display = type === 'event' ? 'flex' : 'none'
         chapterRow.style.flexDirection = 'column'
         chapterRow.style.gap = '4px'
+        charRow.style.display = type === 'conversation' ? 'flex' : 'none'
+        charRow.style.flexDirection = 'column'
+        charRow.style.gap = '4px'
       }
+
+      typeSelect.onchange = () => showParentRow(typeSelect.value)
 
       const slugInput  = this._field(form, 'Slug', 'text', 'e.g. C1 or old_barn')
       const nameInput  = this._field(form, 'Display name', 'text', 'e.g. Chapter 1 - Bundle Beginnings')
@@ -435,7 +515,10 @@ export class NavPane {
         const name = nameInput.value.trim()
         if (!slug || !name) { err('Slug and display name required.'); return }
         if (type === 'event' && chapters.length === 0) { err('Create a chapter first.'); return }
-        const parentSlug = type === 'event' ? chapterSelect.value : undefined
+        if (type === 'conversation' && characters.length === 0) { err('Create a character first.'); return }
+        const parentSlug = type === 'event' ? chapterSelect.value
+          : type === 'conversation' ? charSelect.value
+          : undefined
         try {
           const entity = await api.createEntity(state.projectSlug!, { slug, display_name: name, type, parent_slug: parentSlug })
           this.addEntityLocal({

@@ -245,3 +245,7 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 .nav-chapter-group { margin-bottom: 2px; }
 .nav-event-list { list-style: none; padding-left: 0.75rem; }
 .nav-event-list .nav-entity-item { font-size: 0.8rem; }
+
+/* ---- Conversation token ---- */
+.ref-conversation { color: #ff9eb5; }
+.cm-token-conversation { color: #ff9eb5; font-weight: bold; }

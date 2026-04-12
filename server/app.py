@@ -345,13 +345,14 @@ def share_project(slug: str, body: ShareProjectBody, session: str | None = Cooki
 
 import frontmatter as fm
 
-ENTITY_TYPES = {"location", "character", "item", "event", "game", "chapter"}
+ENTITY_TYPES = {"location", "character", "item", "event", "game", "chapter", "conversation"}
 REF_PATTERNS = [
     (re.compile(r'@@([^@]+)@@'),             "location"),
     (re.compile(r'##([^#]+)##'),             "character"),
     (re.compile(r'~~([^~]+)~~'),             "item"),
     (re.compile(r'!!([^!]+)!!([^!]+)!!'),    "event"),
     (re.compile(r'\?\?([^?]+)\?\?'),           "chapter"),
+    (re.compile(r'\u201c([^\u201c\u201d]+)\u201d'), "conversation"),
 ]
 
 
@@ -401,7 +402,7 @@ def _read_entity_file(project_slug: str, entity_slug: str) -> fm.Post:
 def _extract_refs(body_text: str) -> list[tuple[str, str, str]]:
     """Return list of (slug, type, display_name) tuples from prose references."""
     refs = []
-    for pattern, ref_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4]]:
+    for pattern, ref_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4], REF_PATTERNS[5]]:
         for m in pattern.finditer(body_text):
             display = m.group(1).strip()
             slug = _derive_slug(display, ref_type)
@@ -409,7 +410,7 @@ def _extract_refs(body_text: str) -> list[tuple[str, str, str]]:
     event_pat = REF_PATTERNS[3][0]
     for m in event_pat.finditer(body_text):
         for part in (m.group(1), m.group(2)):
-            for inner_pat, inner_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4]]:
+            for inner_pat, inner_type in [REF_PATTERNS[0], REF_PATTERNS[1], REF_PATTERNS[2], REF_PATTERNS[4], REF_PATTERNS[5]]:
                 for im in inner_pat.finditer(part):
                     display = im.group(1).strip()
                     slug = _derive_slug(display, inner_type)
@@ -435,8 +436,8 @@ def _rebuild_refs(project_id: int, entity_id: int, body_text: str,
                 (project_id, slug),
             ).fetchone()
             if not target and project_slug:
-                # Auto-stub: skip events (require chapter context) and game type
-                if ref_type in ("event", "game"):
+                # Auto-stub: skip events/conversations (require parent context) and game
+                if ref_type in ("event", "conversation", "game"):
                     continue
                 # For chapters we need a game entity parent
                 parent_id = None
@@ -502,7 +503,7 @@ def create_entity(
             ).fetchone()
             if existing_game:
                 raise HTTPException(status_code=409, detail="project already has a game entity")
-    # chapters must be parented to the game entity
+    # chapters must be parented to game; conversations must be parented to a character
     parent_id: int | None = None
     if body.type == "chapter":
         with db() as conn:
@@ -658,7 +659,6 @@ def ensure_entity(
                 parent_id = game_row["id"]
         elif body.type == "event":
             if not body.parent_slug:
-                # No chapter context - refuse to create, return sentinel
                 return {"slug": None, "type": "event", "display_name": display_name, "created": False, "blocked": True}
             parent_row = conn.execute(
                 "SELECT id FROM entities WHERE project_id = ? AND slug = ? AND type = 'chapter'",
@@ -666,6 +666,16 @@ def ensure_entity(
             ).fetchone()
             if not parent_row:
                 return {"slug": None, "type": "event", "display_name": display_name, "created": False, "blocked": True}
+            parent_id = parent_row["id"]
+        elif body.type == "conversation":
+            if not body.parent_slug:
+                return {"slug": None, "type": "conversation", "display_name": display_name, "created": False, "blocked": True}
+            parent_row = conn.execute(
+                "SELECT id FROM entities WHERE project_id = ? AND slug = ? AND type = 'character'",
+                (project["id"], body.parent_slug),
+            ).fetchone()
+            if not parent_row:
+                return {"slug": None, "type": "conversation", "display_name": display_name, "created": False, "blocked": True}
             parent_id = parent_row["id"]
         elif body.parent_slug:
             parent_row = conn.execute(
