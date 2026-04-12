@@ -205,7 +205,7 @@ export class NavPane {
 
     const name = document.createElement('span')
     name.className = 'nav-entity-name'
-    name.textContent = `?? ${chapter.display_name}`
+    name.textContent = chapter.display_name
     name.title = chapter.slug
     name.onclick = () => setState({ activeEntitySlug: chapter.slug })
     row.appendChild(name)

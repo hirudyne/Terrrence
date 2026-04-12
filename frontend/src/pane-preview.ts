@@ -7,7 +7,7 @@ const TYPE_PREFIX: Record<string, string> = {
   item:      '~',
   event:     '!!',
   game:      'G',
-  chapter:   '??',
+  chapter:   'Ch',
 }
 
 const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?)/g
