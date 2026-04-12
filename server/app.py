@@ -19,7 +19,6 @@ from fastapi import Cookie, FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
 DB_PATH     = Path(os.environ.get("TERRRENCE_DB",     "/workspace/data/terrrence.db"))
-YJS_DB_PATH = Path(os.environ.get("TERRRENCE_YJS_DB", "/workspace/data/terrrence_yjs.db"))
 COOKIE_NAME = "terrrence_session"
 INSECURE    = os.environ.get("TERRRENCE_INSECURE_COOKIES", "0") == "1"
 
@@ -43,47 +42,6 @@ def db():
     finally:
         conn.close()
 
-
-@contextmanager
-def yjs_db():
-    conn = sqlite3.connect(YJS_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Startup
-# ---------------------------------------------------------------------------
-
-
-
-
-def _wipe_yjs_store() -> None:
-    """Clear all Yjs update rows so rooms start fresh from Markdown on disk.
-    Since the HTTP debounce is the reliable save path and Markdown is the
-    source of truth, stale Yjs state only causes content clobbering.
-    """
-    try:
-        yjs_conn = sqlite3.connect(YJS_STORE_PATH, timeout=5)
-        yjs_conn.execute("DELETE FROM yupdates")
-        yjs_conn.commit()
-        yjs_conn.close()
-    except Exception:
-        pass
-
-
-def _cleanup_yjs_orphans():
-    with db() as conn:
-        live_ids = {r[0] for r in conn.execute("SELECT id FROM entities").fetchall()}
-    with yjs_db() as conn:
-        rows = conn.execute("SELECT entity_id FROM yjs_state").fetchall()
-        for row in rows:
-            if row["entity_id"] not in live_ids:
-                conn.execute("DELETE FROM yjs_state WHERE entity_id = ?", (row["entity_id"],))
 
 
 # ---------------------------------------------------------------------------
@@ -733,136 +691,135 @@ def update_entity(
 # ---------------------------------------------------------------------------
 
 import asyncio
-import y_py as Y_py
 from fastapi import WebSocket, WebSocketDisconnect
-from ypy_websocket import WebsocketServer, YRoom
-from ypy_websocket.ystore import SQLiteYStore
+import y_py as Y_proto
 
-YJS_STORE_PATH = str(Path(os.environ.get("TERRRENCE_YJS_STORE", "/workspace/data/terrrence_yjs_updates.db")))
+# ---------------------------------------------------------------------------
+# Yjs sync protocol helpers (inlined from ypy_websocket.yutils)
+# ---------------------------------------------------------------------------
 
-
-class _TerrrenceYStore(SQLiteYStore):
-    db_path = YJS_STORE_PATH
-
-
-async def _flush_room_to_markdown(room_name: str) -> None:
-    """Serialize the Yjs doc for a room to its Markdown file on disk."""
-    log.info("Flushing Yjs room to disk: %s", room_name)
-    try:
-        parts = room_name.split("/", 1)
-        if len(parts) != 2:
-            return
-        project_slug, entity_slug = parts
-        entity_path = PROJECTS_ROOT / project_slug / "content" / f"{entity_slug}.md"
-        if not entity_path.exists():
-            return
-
-        post = fm.load(str(entity_path))
-
-        # Read all updates from the store and apply them to a fresh doc
-        store = _TerrrenceYStore(room_name)
-        ydoc = Y_py.YDoc()
-        async with store:
-            async for update, _meta, _ts in store.read():
-                Y_py.apply_update(ydoc, update)
-
-        text = str(ydoc.get_text("codemirror"))
-        if text:
-            post.content = text
-            entity_path.write_text(fm.dumps(post), encoding="utf-8")
-
-            # Update display_name in DB if frontmatter changed
-            with db() as conn:
-                conn.execute(
-                    "UPDATE entities SET display_name = ?, updated_at = datetime('now') WHERE slug = ? AND project_id = (SELECT id FROM projects WHERE slug = ?)",
-                    (post.metadata.get("display_name", entity_slug), entity_slug, project_slug),
-                )
-    except Exception as exc:
-        import logging
-        logging.getLogger("terrrence").warning("flush_room_to_markdown %s: %s", room_name, exc)
+MSG_SYNC      = 0
+MSG_AWARENESS = 1
+SYNC_STEP1    = 0
+SYNC_STEP2    = 1
+SYNC_UPDATE   = 2
 
 
-class _TerrrenceYServer(WebsocketServer):
-    async def get_room(self, name: str) -> YRoom:
-        if name not in self.rooms:
-            store = _TerrrenceYStore(name)
-            self.rooms[name] = YRoom(ready=self.rooms_ready, ystore=store, log=self.log)
-        room = self.rooms[name]
-        await self.start_room(room)
-        return room
-
-    def delete_room(self, *, room: YRoom | None = None, name: str | None = None) -> None:  # type: ignore[override]
-        # Flush to Markdown before deleting
-        if room is not None:
-            room_name = next((k for k, v in self.rooms.items() if v is room), None)
-        else:
-            room_name = name
-        if room_name and _main_loop is not None:
-            _main_loop.call_soon_threadsafe(
-                _main_loop.create_task,
-                _flush_room_to_markdown(room_name),
-            )
-        super().delete_room(room=room)
+def _write_var_uint(n: int) -> bytes:
+    res = []
+    while n > 127:
+        res.append(128 | (127 & n))
+        n >>= 7
+    res.append(n)
+    return bytes(res)
 
 
-_yjs_server = _TerrrenceYServer()
-_yjs_server_task: asyncio.Task | None = None
+def _read_var_uint(data: bytes, i: int) -> tuple[int, int]:
+    """Return (value, new_index)."""
+    val = 0
+    shift = 0
+    while True:
+        b = data[i]; i += 1
+        val |= (b & 0x7F) << shift
+        shift += 7
+        if b < 128:
+            break
+    return val, i
 
 
-@app.on_event("startup")
-async def startup():
-    log.info("Terrrence starting up")
-    _wipe_yjs_store()
-    _cleanup_yjs_orphans()
-    _prune_sessions()
+def _read_message(data: bytes, i: int) -> tuple[bytes, int]:
+    """Read a length-prefixed message. Return (payload, new_index)."""
+    length, i = _read_var_uint(data, i)
+    return data[i:i + length], i + length
 
-    global _yjs_server_task
 
-    async def _run():
+def _make_msg(msg_type: int, sync_type: int, payload: bytes) -> bytes:
+    return bytes([msg_type, sync_type]) + _write_var_uint(len(payload)) + payload
+
+
+def _sync_step1(ydoc: Y_proto.YDoc) -> bytes:
+    sv = Y_proto.encode_state_vector(ydoc)
+    return _make_msg(MSG_SYNC, SYNC_STEP1, sv)
+
+
+def _sync_step2(ydoc: Y_proto.YDoc, remote_sv: bytes) -> bytes:
+    update = Y_proto.encode_state_as_update(ydoc, remote_sv)
+    return _make_msg(MSG_SYNC, SYNC_STEP2, update)
+
+
+def _update_msg(update: bytes) -> bytes:
+    return _make_msg(MSG_SYNC, SYNC_UPDATE, update)
+
+
+# ---------------------------------------------------------------------------
+# Room: one YDoc per project/entity, shared across all connected clients
+# ---------------------------------------------------------------------------
+
+class _YjsRoom:
+    def __init__(self, name: str):
+        self.name = name
+        self.ydoc = Y_proto.YDoc()
+        # websocket objects currently connected
+        self.clients: list[WebSocket] = []
+        # broadcast queue: updates from one client go to all others
+        self._update_queue: asyncio.Queue = asyncio.Queue()
+        self._broadcast_task: asyncio.Task | None = None
+        self._sub: object | None = None  # ydoc observer subscription
+
+    def start(self) -> None:
+        """Start the broadcast task and subscribe to doc updates."""
+        def _on_update(event: Y_proto.AfterTransactionEvent) -> None:
+            update = event.get_update()
+            if update and update != b"\x00\x00":
+                self._update_queue.put_nowait(update)
+
+        self._sub = self.ydoc.observe_after_transaction(_on_update)
+        self._broadcast_task = asyncio.create_task(self._broadcaster())
+
+    async def _broadcaster(self) -> None:
+        """Forward doc updates to all connected clients."""
         while True:
             try:
-                async with _yjs_server:
-                    log.info("Yjs WebSocket server ready")
-                    await asyncio.get_event_loop().create_future()  # run forever
+                update = await self._update_queue.get()
+                msg = _update_msg(update)
+                dead = []
+                for ws in list(self.clients):
+                    try:
+                        await ws.send_bytes(msg)
+                    except Exception:
+                        dead.append(ws)
+                for ws in dead:
+                    self.clients = [c for c in self.clients if c is not ws]
+            except asyncio.CancelledError:
+                break
             except Exception as exc:
-                log.warning("Yjs server died (%s), restarting in 1s", exc)
-                await asyncio.sleep(1)
+                log.debug("YjsRoom broadcaster error in %s: %s", self.name, exc)
 
-    _yjs_server_task = asyncio.create_task(_run())
-    await _yjs_server.started.wait()
-
-
-def _prune_sessions() -> None:
-    """Delete sessions not seen in the last 30 days."""
-    with db() as conn:
-        conn.execute(
-            "DELETE FROM sessions WHERE last_seen_at < datetime('now', '-30 days')"
-        )
+    def stop(self) -> None:
+        if self._broadcast_task:
+            self._broadcast_task.cancel()
+            self._broadcast_task = None
 
 
-from ypy_websocket import ASGIServer
-from ypy_websocket.asgi_server import ASGIWebsocket
-from starlette.websockets import WebSocketState
+# room registry: "project_slug/entity_slug" -> _YjsRoom
+_yjs_rooms: dict[str, _YjsRoom] = {}
 
 
-def _yjs_on_connect(msg: dict, scope: dict) -> bool:
-    """Return True to reject the connection."""
-    # Extract session cookie from scope headers
-    headers = dict(scope.get("headers", []))
-    cookie_header = headers.get(b"cookie", b"").decode("utf-8", errors="ignore")
-    session_id = None
-    for part in cookie_header.split(";"):
-        part = part.strip()
-        if part.startswith(COOKIE_NAME + "="):
-            session_id = part[len(COOKIE_NAME) + 1:]
-            break
-    if not session_id:
-        return True  # reject
-    resolved = _resolve_session(session_id)
-    return resolved is None  # reject if unresolved
+def _get_or_create_room(name: str) -> _YjsRoom:
+    if name not in _yjs_rooms:
+        room = _YjsRoom(name)
+        room.start()
+        _yjs_rooms[name] = room
+        log.debug("YjsRoom created: %s", name)
+    return _yjs_rooms[name]
 
 
-_yjs_asgi = ASGIServer(_yjs_server, on_connect=_yjs_on_connect)
+def _maybe_cleanup_room(name: str) -> None:
+    room = _yjs_rooms.get(name)
+    if room and not room.clients:
+        room.stop()
+        del _yjs_rooms[name]
+        log.debug("YjsRoom cleaned up: %s", name)
 
 
 @app.websocket("/ws/yjs/{project_slug}/{entity_slug}")
@@ -871,23 +828,65 @@ async def yjs_ws(
     project_slug: str,
     entity_slug: str,
 ):
-    log.info("Yjs WS connect: %s/%s", project_slug, entity_slug)
-    scope = websocket.scope
-    scope["path"] = f"/{project_slug}/{entity_slug}"
+    # Auth
+    cookie_header = websocket.headers.get("cookie", "")
+    session_id = None
+    for part in cookie_header.split(";"):
+        part = part.strip()
+        if part.startswith(COOKIE_NAME + "="):
+            session_id = part[len(COOKIE_NAME) + 1:]
+            break
+    if not session_id or _resolve_session(session_id) is None:
+        await websocket.close(code=4401)
+        return
+
+    room_name = f"{project_slug}/{entity_slug}"
+    log.info("Yjs WS connect: %s", room_name)
+
+    await websocket.accept()
+    room = _get_or_create_room(room_name)
+    room.clients.append(websocket)
+
     try:
-        await _yjs_asgi(scope, websocket._receive, websocket._send)
+        # Send sync step 1 to initiate sync
+        await websocket.send_bytes(_sync_step1(room.ydoc))
+
+        async for raw in websocket.iter_bytes():
+            if not raw:
+                continue
+            msg_type = raw[0]
+
+            if msg_type == MSG_SYNC:
+                sync_type = raw[1]
+                payload, _ = _read_message(raw, 2)
+
+                if sync_type == SYNC_STEP1:
+                    # Client is telling us its state vector - send them what they are missing
+                    await websocket.send_bytes(_sync_step2(room.ydoc, payload))
+
+                elif sync_type in (SYNC_STEP2, SYNC_UPDATE):
+                    # Client is sending an update - apply to our doc
+                    if payload and payload != b"\x00\x00":
+                        Y_proto.apply_update(room.ydoc, payload)
+
+            elif msg_type == MSG_AWARENESS:
+                # Forward awareness messages to all other clients as-is
+                for other in list(room.clients):
+                    if other is not websocket:
+                        try:
+                            await other.send_bytes(raw)
+                        except Exception:
+                            pass
+
+    except WebSocketDisconnect:
+        pass
     except Exception as exc:
-        exc_str = str(exc)
-        # ConnectionClosedOK and similar normal closes are not errors
-        if "ConnectionClosed" in type(exc).__name__ or "ConnectionClosed" in exc_str:
-            log.debug("Yjs WS closed normally %s/%s", project_slug, entity_slug)
-        elif "WebsocketServer is not running" in exc_str:
-            log.warning("Yjs WS server not running for %s/%s - will retry on reconnect", project_slug, entity_slug)
-        else:
-            log.error("Yjs WS error %s/%s: %s", project_slug, entity_slug, exc)
-            raise
+        log.debug("Yjs WS error %s: %s", room_name, exc)
     finally:
-        log.info("Yjs WS disconnect: %s/%s", project_slug, entity_slug)
+        room.clients = [c for c in room.clients if c is not websocket]
+        _maybe_cleanup_room(room_name)
+        log.info("Yjs WS disconnect: %s", room_name)
+
 
 
 # ---------------------------------------------------------------------------
