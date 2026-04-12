@@ -1244,10 +1244,9 @@ async def generate_image(
         for gf in game_files:
             gpost = fm.load(str(gf))
             if gpost.metadata.get("type") == "game":
-                for key in ("art_style", "art_palette", "art_references"):
-                    val = gpost.metadata.get(key, "").strip()
-                    if val:
-                        prompt_parts.append(f"{key.replace('_', ' ').title()}: {val}.")
+                val = gpost.metadata.get("art_style", "").strip()
+                if val:
+                    prompt_parts.append(f"Art style: {val}.")
                 break
     except Exception:
         pass

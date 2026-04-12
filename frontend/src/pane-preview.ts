@@ -251,6 +251,7 @@ export class PreviewPane {
   }
 
   private _renderGameSettings(detail: EntityDetail, projectSlug: string): HTMLElement {
+    const MAX = 300
     const section = document.createElement('div')
     section.className = 'game-settings'
 
@@ -259,46 +260,34 @@ export class PreviewPane {
     heading.textContent = 'Art Style'
     section.appendChild(heading)
 
-    const FIELDS: { key: string; label: string; placeholder: string }[] = [
-      { key: 'art_style',      label: 'Style',      placeholder: 'e.g. painterly watercolour, pixel art, noir illustration' },
-      { key: 'art_palette',    label: 'Palette',    placeholder: 'e.g. muted earth tones, high contrast monochrome' },
-      { key: 'art_references', label: 'References', placeholder: 'e.g. Hayao Miyazaki, Edward Gorey, Moebius' },
-    ]
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.className = 'modal-input game-settings-input'
+    input.placeholder = 'e.g. painterly watercolour, muted earth tones, Hayao Miyazaki, Edward Gorey'
+    input.maxLength = MAX
+    input.value = (detail.meta as Record<string, string>)?.['art_style'] ?? ''
 
-    for (const field of FIELDS) {
-      const row = document.createElement('div')
-      row.className = 'game-settings-row'
+    const counter = document.createElement('div')
+    counter.className = 'game-settings-counter'
+    const update = () => { counter.textContent = `${input.value.length} / ${MAX}` }
+    update()
 
-      const label = document.createElement('label')
-      label.className = 'game-settings-label'
-      label.textContent = field.label
-
-      const input = document.createElement('input')
-      input.type = 'text'
-      input.className = 'modal-input game-settings-input'
-      input.placeholder = field.placeholder
-      input.value = (detail.meta as Record<string, string>)?.[field.key] ?? ''
-
-      let saveTimer: ReturnType<typeof setTimeout> | null = null
-      const save = () => {
-        if (saveTimer) clearTimeout(saveTimer)
-        saveTimer = setTimeout(async () => {
-          try {
-            await api.updateEntityMeta(projectSlug, detail.slug, { [field.key]: input.value.trim() })
-            console.debug('[terrrence] game settings saved', field.key, input.value)
-          } catch (e) {
-            console.debug('[terrrence] game settings save error', e)
-          }
-        }, 800)
-      }
-
-      input.oninput = save
-
-      row.appendChild(label)
-      row.appendChild(input)
-      section.appendChild(row)
+    let saveTimer: ReturnType<typeof setTimeout> | null = null
+    input.oninput = () => {
+      update()
+      if (saveTimer) clearTimeout(saveTimer)
+      saveTimer = setTimeout(async () => {
+        try {
+          await api.updateEntityMeta(projectSlug, detail.slug, { art_style: input.value.trim() })
+          console.debug('[terrrence] art_style saved', input.value)
+        } catch (e) {
+          console.debug('[terrrence] art_style save error', e)
+        }
+      }, 800)
     }
 
+    section.appendChild(input)
+    section.appendChild(counter)
     return section
   }
 
