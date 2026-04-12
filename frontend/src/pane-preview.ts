@@ -11,41 +11,8 @@ const TYPE_PREFIX: Record<string, string> = {
   conversation: '“”',
 }
 
-const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?|\u201c\u201c[^\u201c\u201d]+\u201d\u201d)/g
-
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-function deriveSlug(displayName: string, entityType?: string): string {
-  if (entityType === 'chapter' || /^[Cc]hapter\s+\d/.test(displayName)) {
-    const m = displayName.match(/^[Cc]hapter\s+(\d+)/)
-    if (m) return `C${m[1]}`
-  }
-  const ascii = displayName.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-  const slug = ascii.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-  return slug.slice(0, 64) || 'entity'
-}
-
-function renderBody(body: string): string {
-  return body.replace(TOKEN_RE, (match) => {
-    let slug: string
-    let display: string
-    let cssClass: string
-    if (match.startsWith('@@'))      { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-location' }
-    else if (match.startsWith('##')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-character' }
-    else if (match.startsWith('~~')) { display = match.slice(2, -2); slug = deriveSlug(display); cssClass = 'ref-item' }
-    else if (match.startsWith('??'))    { display = match.slice(2, -2); slug = deriveSlug(display, 'chapter'); cssClass = 'ref-chapter' }
-    else if (match.startsWith('“')) { display = match.slice(1, -1); slug = deriveSlug(display); cssClass = 'ref-conversation' }
-    else { return `<span class="ref-event">${escapeHtml(match)}</span>` }
-    return `<a class="ref-link ${cssClass}" data-slug="${slug}" href="#">${escapeHtml(display)}</a>`
-  })
-}
-
-function markdownToHtml(md: string): string {
-  return md.split(/\n{2,}/)
-    .map(p => `<p>${renderBody(p).replace(/\n/g, '<br>')}</p>`)
-    .join('\n')
 }
 
 function isImage(mime: string) { return mime.startsWith('image/') }
@@ -97,7 +64,7 @@ export class PreviewPane {
             api.listEntityTags(s.projectSlug, this.currentSlug),
           ])
           const snapshot = JSON.stringify({ body: d.body, assets: a.map((x: Asset) => x.id), tags: t.map((x: {id:number}) => x.id) })
-          if (snapshot !== this._lastSnapshot && !this.el.querySelector('.game-settings-input:focus') && !this._generating) {
+          if (snapshot !== this._lastSnapshot && !this.el.querySelector('.game-settings-input:focus, .preview-body-edit:focus') && !this._generating) {
             this._lastSnapshot = snapshot
             this._render(d, a, t)
           }
@@ -122,12 +89,22 @@ export class PreviewPane {
     this.el.appendChild(header)
 
     // -- body --
-    const body = document.createElement('div')
-    body.className = 'preview-body'
-    body.innerHTML = markdownToHtml(detail.body)
-    body.querySelectorAll<HTMLAnchorElement>('a.ref-link').forEach(a => {
-      a.onclick = (e) => { e.preventDefault(); setState({ previewEntitySlug: a.dataset.slug ?? null }) }
-    })
+    const body = document.createElement('textarea')
+    body.className = 'preview-body-edit'
+    body.value = detail.body
+    body.spellcheck = false
+    let _bodyTimer: ReturnType<typeof setTimeout> | null = null
+    body.oninput = () => {
+      if (_bodyTimer) clearTimeout(_bodyTimer)
+      _bodyTimer = setTimeout(async () => {
+        try {
+          await api.updateEntity(state.projectSlug!, detail.slug, { body: body.value })
+          // Update snapshot so poll doesn't re-render while editing
+          this._lastSnapshot = JSON.stringify({ body: body.value, assets: [], tags: [] })
+          console.debug('[terrrence] preview body saved', detail.slug)
+        } catch (e) { console.debug('[terrrence] preview body save error', e) }
+      }, 800)
+    }
     this.el.appendChild(body)
 
     // -- game settings (art style etc) --
