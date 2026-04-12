@@ -691,7 +691,12 @@ def update_entity(
     existing_meta = {k: v for k, v in post.metadata.items() if k not in reserved}
     if body.meta is not None:
         new_meta = {k: v for k, v in body.meta.items() if k not in reserved}
-        existing_meta.update(new_meta)
+        # Empty string value = delete the key
+        for k, v in new_meta.items():
+            if v == "" or v is None:
+                existing_meta.pop(k, None)
+            else:
+                existing_meta[k] = v
     else:
         new_meta = existing_meta
 

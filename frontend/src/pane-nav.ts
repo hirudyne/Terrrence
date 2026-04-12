@@ -1,6 +1,7 @@
 import { api, Entity } from './api'
 import { getState, setState, subscribe } from './state'
 import { showLogin } from './login'
+import { showWorldMap } from './world-map'
 
 type ViewMode = 'tree' | 'tabs'
 
@@ -270,10 +271,28 @@ export class NavPane {
       const group = this.entities.filter(e => e.type === type)
       const li = document.createElement('li')
       li.className = 'nav-group'
-      const label = document.createElement('span')
-      label.className = 'nav-group-label'
-      label.textContent = `${TYPE_PREFIX[type]} ${type}s (${group.length})`
-      li.appendChild(label)
+      if (type === 'location') {
+        const labelRow = document.createElement('div')
+        labelRow.className = 'nav-group-label-row'
+        const label = document.createElement('span')
+        label.className = 'nav-group-label nav-group-label--map'
+        label.textContent = `${TYPE_PREFIX[type]} ${type}s (${group.length})`
+        label.title = 'Open world map'
+        label.onclick = () => showWorldMap(this.entities)
+        labelRow.appendChild(label)
+        const mapBtn = document.createElement('button')
+        mapBtn.className = 'nav-action-btn nav-map-btn'
+        mapBtn.title = 'World map'
+        mapBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M3 7l6-3 6 3 6-3v13l-6 3-6-3-6 3V7z"/><line x1="9" y1="4" x2="9" y2="17"/><line x1="15" y1="7" x2="15" y2="20"/></svg>`
+        mapBtn.onclick = (e) => { e.stopPropagation(); showWorldMap(this.entities) }
+        labelRow.appendChild(mapBtn)
+        li.appendChild(labelRow)
+      } else {
+        const label = document.createElement('span')
+        label.className = 'nav-group-label'
+        label.textContent = `${TYPE_PREFIX[type]} ${type}s (${group.length})`
+        li.appendChild(label)
+      }
       const children = document.createElement('ul')
       for (const entity of group) children.appendChild(this._entityItem(entity))
       li.appendChild(children)
