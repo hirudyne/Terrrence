@@ -1299,6 +1299,15 @@ async def generate_image(
     )
 
     log.info("Generating image for %s/%s: %s", project_slug, entity_slug, prompt[:80])
+    # Log full prompt and response to dedicated file for inspection
+    import datetime as _dt
+    _img_log = Path("/workspace/data/image_generation.log")
+    def _img_log_write(entry: str) -> None:
+        with _img_log.open("a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+    _ts = _dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    _img_log_write(f"\n--- {_ts} | {project_slug}/{entity_slug} ---")
+    _img_log_write(f"PROMPT: {prompt}")
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
@@ -1308,6 +1317,7 @@ async def generate_image(
         )
     if resp.status_code != 200:
         log.error("xAI image generation failed: %s %s", resp.status_code, resp.text)
+        _img_log_write(f"RESPONSE ERROR {resp.status_code}: {resp.text}")
         try:
             xai_detail = resp.json().get("error") or resp.text
         except Exception:
@@ -1345,6 +1355,7 @@ async def generate_image(
         )
 
     log.info("Image generated and saved: %s (asset %d)", filename, asset_id)
+    _img_log_write(f"RESPONSE OK: saved as {filename} (asset {asset_id})")
     return {"id": asset_id, "rel_path": rel_path, "mime": mime, "bytes": len(image_data), "sha256": sha256}
 
 
