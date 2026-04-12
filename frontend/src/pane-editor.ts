@@ -52,19 +52,13 @@ export class EditorPane {
     const state = getState()
     if (!state.projectSlug) return
 
-    const alreadyActive = this.activeTab === slug
-
     if (!this.openTabs.includes(slug)) {
       this.openTabs.push(slug)
     }
     this.activeTab = slug
     this._renderTabBar()
-
-    // Only remount if switching to a different entity
-    if (!alreadyActive) {
-      await this._mountEditor(slug)
-      refreshEntityCache(state.projectSlug)
-    }
+    await this._mountEditor(slug)
+    refreshEntityCache(state.projectSlug)
   }
 
   private _renderTabBar() {
