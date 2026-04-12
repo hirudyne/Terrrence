@@ -45,6 +45,8 @@ function markForToken(raw: string): Decoration {
 
 // Callback set per-editor instance so the highlighter can trigger entity logic
 let _onTokenComplete: ((match: string, type: string) => void) | null = null
+let _tokenDebounceTimer: ReturnType<typeof setTimeout> | null = null
+const TOKEN_STUB_DELAY = 5000
 
 const tokenHighlighter = ViewPlugin.fromClass(
   class {
@@ -78,7 +80,13 @@ const tokenHighlighter = ViewPlugin.fromClass(
           const delimLen = 2
           const inner = raw.slice(delimLen, -delimLen).trim()
           console.debug('[terrrence] tokenHighlighter: token near cursor', { raw, type, inner, cursor, tokenEnd: best.tokenEnd })
-          _onTokenComplete(inner, type)
+          if (_tokenDebounceTimer) clearTimeout(_tokenDebounceTimer)
+          const _capturedInner = inner
+          const _capturedType = type
+          _tokenDebounceTimer = setTimeout(() => {
+            _tokenDebounceTimer = null
+            if (_onTokenComplete) _onTokenComplete(_capturedInner, _capturedType)
+          }, TOKEN_STUB_DELAY)
         }
       }
     }
