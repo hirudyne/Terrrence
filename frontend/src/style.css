@@ -230,12 +230,21 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 /* ---- Version label ---- */
 .nav-version {
   margin-top: auto;
-  padding: 0.5rem 0.4rem 0.25rem;
+  padding: 0.5rem 0.4rem 0.1rem;
   font-size: 0.7rem;
   color: var(--text-dim);
   font-family: monospace;
   user-select: none;
 }
+.nav-save-status {
+  padding: 0 0.4rem 0.3rem;
+  font-size: 0.7rem;
+  font-family: monospace;
+  user-select: none;
+  color: var(--text-dim);
+}
+.nav-save-status[data-status="saving"] { color: var(--text-dim); }
+.nav-save-status[data-status="saved"]  { color: #6dbf7f; }
 /* Make nav-pane a flex column so margin-top:auto on version pushes it to bottom */
 .nav-pane { display: flex; flex-direction: column; }
 

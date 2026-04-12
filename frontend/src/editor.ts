@@ -21,40 +21,6 @@ const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?
 
 // A token is "committed" when its closing delimiter has just been typed.
 // Returns { displayName, type } or null.
-function _detectCompletedToken(
-  docAfter: string,
-  insertedAt: number,
-  insertedText: string,
-): { displayName: string; type: string } | null {
-  // Only trigger on the closing character of a delimiter
-  const closingChars = new Set(['@', '#', '~', '?', '\u201d'])
-  if (!insertedText.split('').some(c => closingChars.has(c) || /\s/.test(c))) return null
-
-  // Search backwards from cursor for a complete token ending exactly at cursor.
-  // Avoids the fixed-window bug where a slice starting mid-line can match wrong delimiters.
-  const cursorPos = insertedAt + insertedText.length
-  const doc = docAfter.slice(0, cursorPos)
-
-  function findToken(open: string, close: string, type: string): { displayName: string; type: string } | null {
-    if (!doc.endsWith(close)) return null
-    const contentEnd = doc.length - close.length
-    const openIdx = doc.lastIndexOf(open, contentEnd - 1)
-    if (openIdx === -1) return null
-    const content = doc.slice(openIdx + open.length, contentEnd)
-    if (content.includes(open[0])) return null
-    if (!content.trim()) return null
-    return { displayName: content.trim(), type }
-  }
-
-  return (
-    findToken('@@', '@@', 'location') ||
-    findToken('##', '##', 'character') ||
-    findToken('~~', '~~', 'item') ||
-    findToken('??', '??', 'chapter') ||
-    findToken('\u201c\u201c', '\u201d\u201d', 'conversation') ||
-    null
-  )
-}
 
 
 // ---------------------------------------------------------------------------
@@ -77,13 +43,41 @@ function markForToken(raw: string): Decoration {
   return eventMark
 }
 
+// Callback set per-editor instance so the highlighter can trigger entity logic
+let _onTokenComplete: ((match: string, type: string) => void) | null = null
+
 const tokenHighlighter = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet
     constructor(view: EditorView) { this.decorations = this._build(view) }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged)
+      if (update.docChanged || update.viewportChanged) {
         this.decorations = this._build(update.view)
+      }
+      if (update.docChanged && _onTokenComplete) {
+        const cursor = update.state.selection.main.head
+        const text = update.state.doc.toString()
+        TOKEN_RE.lastIndex = 0
+        let m: RegExpExecArray | null
+        while ((m = TOKEN_RE.exec(text)) !== null) {
+          const tokenEnd = m.index + m[0].length
+          if (tokenEnd === cursor) {
+            const raw = m[0]
+            const type = raw.startsWith('@@') ? 'location'
+              : raw.startsWith('##') ? 'character'
+              : raw.startsWith('~~') ? 'item'
+              : raw.startsWith('??') ? 'chapter'
+              : raw.startsWith('\u201c') ? 'conversation'
+              : 'event'
+            // Extract display name: strip delimiters
+            const delimLen = type === 'conversation' ? 2 : 2
+            const inner = raw.slice(delimLen, -delimLen).trim()
+            console.debug('[terrrence] tokenHighlighter: token at cursor', { raw, type, inner })
+            _onTokenComplete(inner, type)
+            break
+          }
+        }
+      }
     }
     _build(view: EditorView): DecorationSet {
       const builder = new RangeSetBuilder<Decoration>()
@@ -171,6 +165,31 @@ export function getOrCreateEditor(
   const appState = getState()
   const project  = appState.projectSlug!
 
+  // Wire token-complete callback into the shared highlighter slot
+  _onTokenComplete = (displayName: string, type: string) => {
+    const nav = (window as any)._terrrenceNav
+    const parentSlug = (type === 'event' || type === 'conversation') ? entitySlug : undefined
+    if (type === 'event' && entityType !== 'chapter') return
+    if (type === 'conversation' && entityType !== 'character') return
+    console.debug('[terrrence] ensureEntity call', { project, displayName, type, parentSlug })
+    api.ensureEntity(project, displayName, type, parentSlug)
+      .then(entity => {
+        console.debug('[terrrence] ensureEntity result', entity)
+        if (entity.blocked || !entity.slug) return
+        if (entity.created) {
+          refreshEntityCache(project)
+          if (nav) nav.addEntityLocal({
+            slug: entity.slug,
+            type: entity.type,
+            display_name: entity.display_name,
+            parent_slug: parentSlug ?? null,
+          })
+        }
+        setState({ previewEntitySlug: entity.slug })
+      })
+      .catch((e: unknown) => { console.debug('[terrrence] ensureEntity error', e) })
+  }
+
   const ydoc     = new Y.Doc()
   const ytext    = ydoc.getText('codemirror')
   const wsProto  = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -208,7 +227,9 @@ export function getOrCreateEditor(
     if (content === lastSaved) return
     lastSaved = content
     try {
+      setSaveStatus('saving')
       await api.updateEntity(project, entitySlug, { body: content })
+      setSaveStatus('saved')
       if (navReloadTimer) clearTimeout(navReloadTimer)
       navReloadTimer = setTimeout(() => {
         const nav = (window as any)._terrrenceNav
@@ -280,37 +301,7 @@ export function getOrCreateEditor(
         debounceTimer = setTimeout(() => _save(content), 1000)
       }
 
-      // Auto-stub: detect completed tokens
-      update.transactions.forEach((tr: Transaction) => {
-        if (!tr.docChanged) return
-        tr.changes.iterChanges((_fA, _tA, fromB, _tB, inserted) => {
-          const insertedText = inserted.toString()
-          const docAfter = update.state.doc.toString()
-          const result = _detectCompletedToken(docAfter, fromB, insertedText)
-          if (!result) return
-          const { displayName, type } = result
-          const nav = (window as any)._terrrenceNav
-          // Events only auto-create when typed inside a chapter document
-          const parentSlug = (type === 'event' || type === 'conversation') ? entitySlug : undefined
-          if (type === 'event' && entityType !== 'chapter') return
-          if (type === 'conversation' && entityType !== 'character') return
-          api.ensureEntity(project, displayName, type, parentSlug)
-            .then(entity => {
-              if (entity.blocked || !entity.slug) return
-              if (entity.created) {
-                refreshEntityCache(project)
-                if (nav) nav.addEntityLocal({
-                  slug: entity.slug,
-                  type: entity.type,
-                  display_name: entity.display_name,
-                  parent_slug: parentSlug ?? null,
-                })
-              }
-              setState({ previewEntitySlug: entity.slug })
-            })
-            .catch(() => {})
-        })
-      })
+
     }),
   ]
 
@@ -330,6 +321,11 @@ export function getOrCreateEditor(
   }
   _instances.set(entitySlug, instance)
   return view
+}
+
+export function setSaveStatus(status: 'saving' | 'saved') {
+  const nav = (window as any)._terrrenceNav
+  if (nav && nav.setSaveStatus) nav.setSaveStatus(status)
 }
 
 export function destroyEditor(entitySlug: string) {

@@ -141,6 +141,19 @@ export class NavPane {
     if (this._version) this._renderVersionLabel()
   }
 
+  setSaveStatus(status: 'saving' | 'saved') {
+    let el = this.el.querySelector('.nav-save-status') as HTMLElement | null
+    if (!el) {
+      el = document.createElement('div')
+      el.className = 'nav-save-status'
+      const versionEl = this.el.querySelector('.nav-version')
+      if (versionEl) versionEl.insertAdjacentElement('afterend', el)
+      else this.el.appendChild(el)
+    }
+    el.textContent = status === 'saving' ? 'saving...' : 'saved'
+    el.dataset.status = status
+  }
+
   private _renderVersionLabel() {
     const existing = this.el.querySelector('.nav-version')
     if (existing) { existing.textContent = `v${this._version}`; return }
