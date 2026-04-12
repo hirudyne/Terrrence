@@ -1227,31 +1227,76 @@ async def generate_image(
     post = _read_entity_file(project_slug, entity_slug)
     body_text = post.content.strip()
 
-    entity_type_label = entity["type"]
+    import re as _re
+
     display_name = entity["display_name"]
-    prompt_parts = [f"A visual depiction of a {entity_type_label} named '{display_name}' from an adventure game."]
+    entity_type  = entity["type"]
+
+    # Strip token syntax from body text
     if body_text:
-        # Strip token syntax from body before including in prompt
-        import re as _re
         clean_body = _re.sub(r'@@([^@]+)@@|##([^#]+)##|~~([^~]+)~~|\?\?([^?]+)\?\?', lambda m: next(g for g in m.groups() if g is not None), body_text)
         clean_body = _re.sub(r'\s+', ' ', clean_body).strip()
-        if clean_body:
-            prompt_parts.append(clean_body)
-    # Inject project-level art style from game entity frontmatter
+    else:
+        clean_body = ""
+
+    # Fetch project-level art style
+    art_style = ""
     try:
-        import glob as _glob
-        game_files = list((PROJECTS_ROOT / project_slug / "content").glob("*.md"))
-        for gf in game_files:
+        for gf in (PROJECTS_ROOT / project_slug / "content").glob("*.md"):
             gpost = fm.load(str(gf))
             if gpost.metadata.get("type") == "game":
-                val = gpost.metadata.get("art_style", "").strip()
-                if val:
-                    prompt_parts.append(f"Art style: {val}.")
+                art_style = gpost.metadata.get("art_style", "").strip()
                 break
     except Exception:
         pass
-    prompt_parts.append("Stylised adventure game art.")
-    prompt = " ".join(prompt_parts)
+
+    _PROMPT_TEMPLATES: dict[str, str] = {
+        "character": (
+            "Full body character concept art, {description}, "
+            "standing in a neutral A-pose or relaxed straight pose, "
+            "entire body visible from head to toe with feet fully in frame, "
+            "no cropping, clean isolated view, "
+            "plain neutral light gray seamless background, "
+            "studio lighting, soft even illumination, no shadows, "
+            "no environment, no unrelated props or background elements, "
+            "no text, no logos, no watermarks, "
+            "highly detailed, clean lines, "
+            "professional character design sheet style"
+            "{art_style_clause}."
+        ),
+        "item": (
+            "Full view game item sprite of {description}, "
+            "centered, entire object clearly visible, "
+            "isolated on plain light gray background, "
+            "soft even illumination, minimal soft shadow, "
+            "clean sharp details, no cropping, no background elements, "
+            "no text, no logos, "
+            "professional 2D inventory icon / sprite sheet style, "
+            "crisp edges, high resolution game asset"
+            "{art_style_clause}."
+        ),
+        "location": (
+            "Wide horizontal full background image for a 2D point-and-click adventure game, "
+            "{description}, "
+            "complete scene fully visible edge to edge, no cropping, "
+            "clean illustrative adventure game style, "
+            "depth with clear layers (foreground, midground, distant background), "
+            "soft natural lighting, "
+            "empty of characters and interactive items, "
+            "plain and neutral composition, "
+            "highly detailed yet stylized, "
+            "professional game environment art, "
+            "no text, no logos"
+            "{art_style_clause}."
+        ),
+    }
+
+    description = clean_body if clean_body else display_name
+    art_style_clause = f", {art_style}" if art_style else ""
+    prompt = _PROMPT_TEMPLATES[entity_type].format(
+        description=description,
+        art_style_clause=art_style_clause,
+    )
 
     log.info("Generating image for %s/%s: %s", project_slug, entity_slug, prompt[:80])
 
