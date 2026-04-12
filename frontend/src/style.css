@@ -113,7 +113,7 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 .preview-slug { color: var(--text-dim); font-size: 0.75rem; font-family: monospace; }
 .preview-body { line-height: 1.7; }
 .preview-body p { margin-bottom: 0.75rem; }
-.preview-body-edit { width: 100%; box-sizing: border-box; min-height: 8rem; resize: vertical; background: transparent; border: none; border-bottom: 1px solid var(--border); color: var(--text); font-family: monospace; font-size: 0.82rem; line-height: 1.6; padding: 0.5rem 0.75rem; outline: none; }
+.preview-body-edit { width: 100%; box-sizing: border-box; min-height: 4rem; max-height: 50%; resize: vertical; background: transparent; border: none; border-bottom: 1px solid var(--border); color: var(--text); font-family: monospace; font-size: 0.82rem; line-height: 1.6; padding: 0.5rem 0.75rem; outline: none; overflow-y: auto; }
 .preview-body-edit:focus { border-bottom-color: var(--accent); background: var(--bg2); }
 
 .ref-link { text-decoration: none; border-bottom: 1px dashed currentColor; cursor: pointer; }
