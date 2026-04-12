@@ -93,7 +93,10 @@ export class PreviewPane {
             api.listEntityAssets(s.projectSlug, this.currentSlug),
             api.listEntityTags(s.projectSlug, this.currentSlug),
           ])
-          this._render(d, a, t)
+          // Don't re-render if user is actively editing a settings field
+          if (!this.el.querySelector('.game-settings-input:focus')) {
+            this._render(d, a, t)
+          }
         } catch (_) {}
       }, 2000)
     } catch (e: any) {
