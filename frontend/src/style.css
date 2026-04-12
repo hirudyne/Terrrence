@@ -363,3 +363,21 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
   overflow: hidden; text-overflow: ellipsis;
   text-align: center;
 }
+.wm-card-connzone {
+  position: absolute; inset: 0;
+  border: 3px solid transparent;
+  border-radius: var(--radius);
+  pointer-events: none;
+  transition: border-color 0.1s;
+}
+.wm-card--placed:hover .wm-card-connzone {
+  border-color: rgba(126,200,227,0.25);
+}
+.wm-card--connecting {
+  outline: 2px solid #f4a261;
+  outline-offset: 2px;
+}
+.wm-card--snap {
+  outline: 2px solid #7ec8e3;
+  outline-offset: 2px;
+}
