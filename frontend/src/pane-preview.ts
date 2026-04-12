@@ -215,6 +215,17 @@ export class PreviewPane {
       img.src = url
       img.className = 'asset-img'
       img.title = asset.rel_path
+      img.style.cursor = 'zoom-in'
+      img.onclick = () => {
+        const overlay = document.createElement('div')
+        overlay.className = 'asset-lightbox'
+        const full = document.createElement('img')
+        full.src = url
+        full.className = 'asset-lightbox-img'
+        overlay.appendChild(full)
+        overlay.onclick = () => overlay.remove()
+        document.body.appendChild(overlay)
+      }
       tile.appendChild(img)
     } else if (isAudio(asset.mime)) {
       const audio = document.createElement('audio')
