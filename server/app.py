@@ -1125,8 +1125,17 @@ def disassociate_asset(
 # ---------------------------------------------------------------------------
 
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+
+
+@app.get("/")
+async def serve_index():
+    response = FileResponse(str(_FRONTEND_DIST / "index.html"))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
 
 if _FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="static")
