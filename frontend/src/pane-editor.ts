@@ -102,12 +102,20 @@ export class EditorPane {
     }
   }
 
+  private _mountSeq = 0  // incremented on each mount; stale mounts abort
+
   private async _mountEditor(slug: string) {
     const state = getState()
     if (!state.projectSlug) return
 
+    const seq = ++this._mountSeq
     this.editorArea.innerHTML = ''
+
     const detail = await api.getEntity(state.projectSlug, slug)
+
+    // If another mount started while we were awaiting, abort this one
+    if (seq !== this._mountSeq) return
+
     this.tabNames.set(slug, detail.display_name || slug)
     this._renderTabBar()
 
@@ -115,7 +123,6 @@ export class EditorPane {
     wrap.style.height = '100%'
     this.editorArea.appendChild(wrap)
 
-    // Save logic is now handled inside editor.ts (per-space + 1s debounce).
     getOrCreateEditor(slug, detail.type ?? 'unknown', wrap, detail.body, (_content) => { /* handled in editor.ts */ })
   }
 }

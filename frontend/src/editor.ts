@@ -150,6 +150,14 @@ export function getOrCreateEditor(
   const existing = _instances.get(entitySlug)
   if (existing) {
     container.appendChild(existing.view.dom)
+    // If the on-disk content differs from what the editor shows (e.g. after
+    // an out-of-band save), update the doc without touching Yjs state.
+    const currentDoc = existing.view.state.doc.toString()
+    if (initialContent && currentDoc !== initialContent && existing.view.state.doc.length === 0) {
+      existing.view.dispatch({
+        changes: { from: 0, to: currentDoc.length, insert: initialContent }
+      })
+    }
     return existing.view
   }
 
@@ -162,9 +170,28 @@ export function getOrCreateEditor(
   const wsBase   = `${wsProto}//${location.host}/ws/yjs`
   const provider = new WebsocketProvider(wsBase, `${project}/${entitySlug}`, ydoc)
 
-  if (ytext.toString() === '' && initialContent) {
-    ydoc.transact(() => ytext.insert(0, initialContent))
-  }
+  // Seed ytext with disk content only after the Yjs sync handshake completes.
+  // If the server already has content it will arrive via SYNC_STEP2 and overwrite;
+  // if the server room is empty the provider fires 'synced' with ytext still empty,
+  // at which point we insert from disk. This prevents double-content on reconnect.
+  let seeded = false
+  provider.once('synced', () => {
+    if (!seeded && ytext.toString() === '' && initialContent) {
+      seeded = true
+      ydoc.transact(() => ytext.insert(0, initialContent), 'seed')
+    }
+  })
+
+  // Fallback: if WS connection fails entirely, seed from disk immediately
+  // so the editor is usable offline.
+  setTimeout(() => {
+    if (!seeded && ytext.toString() === '' && initialContent) {
+      seeded = true
+      ydoc.transact(() => ytext.insert(0, initialContent), 'seed')
+    }
+  }, 3000)
+
+  const initialDoc = ''  // yCollab will populate from ytext once synced
 
   let lastSaved = initialContent
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -247,7 +274,7 @@ export function getOrCreateEditor(
   ]
 
   const view = new EditorView({
-    state: EditorState.create({ doc: ytext.toString(), extensions }),
+    state: EditorState.create({ doc: initialDoc, extensions }),
     parent: container,
   })
 
