@@ -191,6 +191,8 @@ function _makeCard(entry: LocationEntry): HTMLElement {
   label.textContent = entry.entity.display_name
   card.appendChild(label)
 
+  card.title = entry.entity.display_name
+
   // Connection zone indicator (outer 34%, pointer-events handled in JS)
   const zone = document.createElement('div')
   zone.className = 'wm-card-connzone'
