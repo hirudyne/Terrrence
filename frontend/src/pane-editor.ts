@@ -7,6 +7,7 @@ import { getOrCreateEditor, destroyEditor, refreshEntityCache } from './editor'
 export class EditorPane {
   private el: HTMLElement
   private openTabs: string[] = []     // entity slugs in tab order
+  private tabNames: Map<string, string> = new Map()  // slug -> display_name
   private activeTab: string | null = null
   private editorArea: HTMLElement
 
@@ -72,7 +73,7 @@ export class EditorPane {
     for (const slug of this.openTabs) {
       const tab = document.createElement('button')
       tab.className = 'editor-tab' + (slug === this.activeTab ? ' active' : '')
-      tab.textContent = slug
+      tab.textContent = this.tabNames.get(slug) ?? slug
       tab.onclick = () => {
         this.activeTab = slug
         setState({ activeEntitySlug: slug })
@@ -113,6 +114,8 @@ export class EditorPane {
 
     this.editorArea.innerHTML = ''
     const detail = await api.getEntity(state.projectSlug, slug)
+    this.tabNames.set(slug, detail.display_name || slug)
+    this._renderTabBar()
 
     const wrap = document.createElement('div')
     wrap.style.height = '100%'
