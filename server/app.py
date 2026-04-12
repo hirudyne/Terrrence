@@ -1259,7 +1259,7 @@ async def generate_image(
         resp = await client.post(
             "https://api.x.ai/v1/images/generations",
             headers={"Authorization": f"Bearer {xai_key}", "Content-Type": "application/json"},
-            json={"model": "grok-2-image", "prompt": prompt, "n": 1},
+            json={"model": "grok-imagine-image", "prompt": prompt, "n": 1},
         )
     if resp.status_code != 200:
         log.error("xAI image generation failed: %s %s", resp.status_code, resp.text)
