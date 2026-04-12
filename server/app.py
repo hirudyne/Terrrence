@@ -681,7 +681,9 @@ def update_entity(
             raise HTTPException(status_code=404, detail="entity not found")
 
     post = _read_entity_file(project_slug, entity_slug)
-    new_display_name = body.display_name.strip() if body.display_name is not None else entity["display_name"]
+    # Prefer file's display_name over DB as source of truth on fallback
+    file_display_name = post.metadata.get("display_name") or entity["display_name"]
+    new_display_name = body.display_name.strip() if body.display_name is not None else file_display_name
     new_body         = body.body if body.body is not None else post.content
 
     # Merge incoming meta with existing, stripping reserved keys
