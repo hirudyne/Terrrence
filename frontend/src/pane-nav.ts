@@ -45,6 +45,12 @@ export class NavPane {
     })
     api.version().then(v => { this._version = v.version; this._renderVersionLabel() }).catch(() => {})
     this._render()
+
+    // Auto-open project selector on first load if no project is active
+    if (!getState().projectSlug) {
+      // Small delay lets Golden Layout finish mounting before modal appears
+      setTimeout(() => this._showProjectModal(), 150)
+    }
   }
 
   private _updateActiveHighlight(activeSlug: string | null) {
