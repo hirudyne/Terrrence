@@ -57,25 +57,28 @@ const tokenHighlighter = ViewPlugin.fromClass(
       if (update.docChanged && _onTokenComplete) {
         const cursor = update.state.selection.main.head
         const text = update.state.doc.toString()
+        // Find the most recently completed token: its end must be <= cursor and within 2 chars
         TOKEN_RE.lastIndex = 0
+        let best: { raw: string; tokenEnd: number } | null = null
         let m: RegExpExecArray | null
         while ((m = TOKEN_RE.exec(text)) !== null) {
           const tokenEnd = m.index + m[0].length
-          if (tokenEnd === cursor) {
-            const raw = m[0]
-            const type = raw.startsWith('@@') ? 'location'
-              : raw.startsWith('##') ? 'character'
-              : raw.startsWith('~~') ? 'item'
-              : raw.startsWith('??') ? 'chapter'
-              : raw.startsWith('\u201c') ? 'conversation'
-              : 'event'
-            // Extract display name: strip delimiters
-            const delimLen = type === 'conversation' ? 2 : 2
-            const inner = raw.slice(delimLen, -delimLen).trim()
-            console.debug('[terrrence] tokenHighlighter: token at cursor', { raw, type, inner })
-            _onTokenComplete(inner, type)
-            break
+          if (tokenEnd <= cursor && cursor - tokenEnd <= 2) {
+            if (!best || tokenEnd > best.tokenEnd) best = { raw: m[0], tokenEnd }
           }
+        }
+        if (best) {
+          const raw = best.raw
+          const type = raw.startsWith('@@') ? 'location'
+            : raw.startsWith('##') ? 'character'
+            : raw.startsWith('~~') ? 'item'
+            : raw.startsWith('??') ? 'chapter'
+            : raw.startsWith('\u201c') ? 'conversation'
+            : 'event'
+          const delimLen = 2
+          const inner = raw.slice(delimLen, -delimLen).trim()
+          console.debug('[terrrence] tokenHighlighter: token near cursor', { raw, type, inner, cursor, tokenEnd: best.tokenEnd })
+          _onTokenComplete(inner, type)
         }
       }
     }

@@ -36,6 +36,7 @@ def db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
     try:
         yield conn
         conn.commit()
@@ -818,12 +819,17 @@ async def startup():
     global _yjs_server_task
 
     async def _run():
-        async with _yjs_server:
-            await asyncio.get_event_loop().create_future()  # run forever
+        while True:
+            try:
+                async with _yjs_server:
+                    log.info("Yjs WebSocket server ready")
+                    await asyncio.get_event_loop().create_future()  # run forever
+            except Exception as exc:
+                log.warning("Yjs server died (%s), restarting in 1s", exc)
+                await asyncio.sleep(1)
 
     _yjs_server_task = asyncio.create_task(_run())
     await _yjs_server.started.wait()
-    log.info("Yjs WebSocket server ready")
 
 
 def _prune_sessions() -> None:
@@ -871,8 +877,15 @@ async def yjs_ws(
     try:
         await _yjs_asgi(scope, websocket._receive, websocket._send)
     except Exception as exc:
-        log.error("Yjs WS error %s/%s: %s", project_slug, entity_slug, exc)
-        raise
+        exc_str = str(exc)
+        # ConnectionClosedOK and similar normal closes are not errors
+        if "ConnectionClosed" in type(exc).__name__ or "ConnectionClosed" in exc_str:
+            log.debug("Yjs WS closed normally %s/%s", project_slug, entity_slug)
+        elif "WebsocketServer is not running" in exc_str:
+            log.warning("Yjs WS server not running for %s/%s - will retry on reconnect", project_slug, entity_slug)
+        else:
+            log.error("Yjs WS error %s/%s: %s", project_slug, entity_slug, exc)
+            raise
     finally:
         log.info("Yjs WS disconnect: %s/%s", project_slug, entity_slug)
 
