@@ -260,8 +260,7 @@ export class PreviewPane {
     heading.textContent = 'Art Style'
     section.appendChild(heading)
 
-    const input = document.createElement('input')
-    input.type = 'text'
+    const input = document.createElement('textarea')
     input.className = 'modal-input game-settings-input'
     input.placeholder = 'e.g. painterly watercolour, muted earth tones, Hayao Miyazaki, Edward Gorey'
     input.maxLength = MAX

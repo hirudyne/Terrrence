@@ -211,7 +211,7 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 .asset-btn-generate { border-color: #6dbf7f; color: #6dbf7f; }
 .game-settings { padding: 0.6rem 0.75rem; border-top: 1px solid var(--border); }
 .game-settings-heading { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 0.4rem; }
-.game-settings-input { width: 100%; box-sizing: border-box; font-size: 0.75rem; padding: 0.2rem 0.4rem; }
+.game-settings-input { width: 100%; box-sizing: border-box; font-size: 0.75rem; padding: 0.2rem 0.4rem; min-height: 4.5rem; resize: vertical; }
 .game-settings-counter { font-size: 0.68rem; color: var(--text-dim); text-align: right; margin-top: 0.2rem; }
 .asset-btn-generate:hover { background: #6dbf7f22; }
 .asset-btn-generate:disabled { opacity: 0.5; cursor: wait; }
