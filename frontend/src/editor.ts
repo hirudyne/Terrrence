@@ -201,11 +201,19 @@ export function getOrCreateEditor(
 
   let lastSaved = initialContent
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
+  let navReloadTimer: ReturnType<typeof setTimeout> | null = null
 
   async function _save(content: string) {
     if (content === lastSaved) return
     lastSaved = content
-    try { await api.updateEntity(project, entitySlug, { body: content }) } catch (_) {}
+    try {
+      await api.updateEntity(project, entitySlug, { body: content })
+      if (navReloadTimer) clearTimeout(navReloadTimer)
+      navReloadTimer = setTimeout(() => {
+        const nav = (window as any)._terrrenceNav
+        if (nav) nav.load(project)
+      }, 2000)
+    } catch (_) {}
   }
 
   const extensions = [
