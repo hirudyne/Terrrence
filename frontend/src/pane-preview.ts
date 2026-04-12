@@ -55,6 +55,7 @@ export class PreviewPane {
   private el: HTMLElement
   private currentSlug: string | null = null
   private pollTimer: ReturnType<typeof setInterval> | null = null
+  private _lastSnapshot: string = ''
 
   constructor(container: HTMLElement) {
     this.el = container
@@ -83,6 +84,7 @@ export class PreviewPane {
         api.listEntityAssets(state.projectSlug, slug),
         api.listEntityTags(state.projectSlug, slug),
       ])
+      this._lastSnapshot = JSON.stringify({ body: detail.body, assets: assets.map(a => a.id), tags: tags.map(t => t.id) })
       this._render(detail, assets, tags)
       this.pollTimer = setInterval(async () => {
         const s = getState()
@@ -93,8 +95,9 @@ export class PreviewPane {
             api.listEntityAssets(s.projectSlug, this.currentSlug),
             api.listEntityTags(s.projectSlug, this.currentSlug),
           ])
-          // Don't re-render if user is actively editing a settings field
-          if (!this.el.querySelector('.game-settings-input:focus')) {
+          const snapshot = JSON.stringify({ body: d.body, assets: a.map((x: Asset) => x.id), tags: t.map((x: {id:number}) => x.id) })
+          if (snapshot !== this._lastSnapshot && !this.el.querySelector('.game-settings-input:focus')) {
+            this._lastSnapshot = snapshot
             this._render(d, a, t)
           }
         } catch (_) {}
