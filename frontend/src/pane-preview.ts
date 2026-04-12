@@ -362,7 +362,27 @@ export class PreviewPane {
           genBtn.textContent = '+ Generate image'
         }
       }
+      const clipBtn = document.createElement('button')
+      clipBtn.className = 'asset-btn asset-btn-clipboard'
+      clipBtn.textContent = 'Copy prompt'
+      clipBtn.title = 'Copy image generation prompt to clipboard'
+      clipBtn.onclick = async () => {
+        clipBtn.disabled = true
+        clipBtn.textContent = 'Copying...'
+        try {
+          const { prompt } = await api.getImagePrompt(projectSlug, entitySlug)
+          await navigator.clipboard.writeText(prompt)
+          clipBtn.textContent = 'Copied!'
+          setTimeout(() => { clipBtn.textContent = 'Copy prompt'; clipBtn.disabled = false }, 1500)
+        } catch (e: any) {
+          console.debug('[terrrence] getImagePrompt error', e)
+          clipBtn.textContent = 'Copy prompt'
+          clipBtn.disabled = false
+        }
+      }
+
       wrap.appendChild(genBtn)
+      wrap.appendChild(clipBtn)
       wrap.appendChild(genError)
     }
 

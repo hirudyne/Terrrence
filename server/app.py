@@ -1358,7 +1358,98 @@ def disassociate_asset(
 # Image generation
 # ---------------------------------------------------------------------------
 
+
+import re as _re_img
+
+_IMAGE_PROMPT_TEMPLATES: dict[str, str] = {
+    "character": (
+        "{art_style_clause}"
+        "Full body character concept art, {description}, "
+        "standing in a neutral A-pose or relaxed straight pose, "
+        "entire body visible from head to toe with feet fully in frame, "
+        "no cropping, clean isolated view, "
+        "plain neutral light gray seamless background, "
+        "studio lighting, soft even illumination, no shadows, "
+        "no environment, no unrelated props or background elements, "
+        "no text, no logos, no watermarks, "
+        "highly detailed, clean lines, "
+        "professional character design sheet style."
+    ),
+    "item": (
+        "{art_style_clause}"
+        "Full view game item sprite of {description}, "
+        "centered, entire object clearly visible, "
+        "isolated on plain light gray background, "
+        "soft even illumination, minimal soft shadow, "
+        "clean sharp details, no cropping, no background elements, "
+        "no text, no logos, "
+        "professional 2D inventory icon / sprite sheet style, "
+        "crisp edges, high resolution game asset."
+    ),
+    "location": (
+        "{art_style_clause}"
+        "Wide horizontal full background image for a 2D point-and-click adventure game, "
+        "{description}, "
+        "complete scene fully visible edge to edge, no cropping, "
+        "clean illustrative adventure game style, "
+        "depth with clear layers (foreground, midground, distant background), "
+        "soft natural lighting, "
+        "empty of characters and interactive items, "
+        "plain and neutral composition, "
+        "highly detailed yet stylized, "
+        "professional game environment art, "
+        "no text, no logos."
+    ),
+}
+
 _IMAGE_TYPES = {"location", "character", "item"}
+
+
+def _build_image_prompt(project_slug: str, display_name: str, entity_type: str, body_text: str) -> str:
+    if body_text:
+        clean_body = _re_img.sub(r'@@([^@]+)@@|##([^#]+)##|~~([^~]+)~~|\?\?([^?]+)\?\?', lambda m: next(g for g in m.groups() if g is not None), body_text)
+        clean_body = _re_img.sub(r'\s+', ' ', clean_body).strip()
+    else:
+        clean_body = ""
+    art_style = ""
+    try:
+        for gf in (PROJECTS_ROOT / project_slug / "content").glob("*.md"):
+            gpost = fm.load(str(gf))
+            if gpost.metadata.get("type") == "game":
+                art_style = gpost.metadata.get("art_style", "").strip()
+                break
+    except Exception:
+        pass
+    description = clean_body if clean_body else display_name
+    art_style_clause = f"Art style: {art_style}. " if art_style else ""
+    return _IMAGE_PROMPT_TEMPLATES[entity_type].format(
+        description=description,
+        art_style_clause=art_style_clause,
+    )
+
+
+@app.get("/projects/{project_slug}/entities/{entity_slug}/image-prompt")
+async def get_image_prompt(
+    project_slug: str,
+    entity_slug: str,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    """Return the image generation prompt without actually generating."""
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+    with db() as conn:
+        entity = conn.execute(
+            "SELECT id, type, display_name FROM entities WHERE project_id = ? AND slug = ?",
+            (project["id"], entity_slug),
+        ).fetchone()
+    if not entity:
+        raise HTTPException(status_code=404, detail="entity not found")
+    if entity["type"] not in _IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="image generation only supported for location, character, and item entities")
+    post = _read_entity_file(project_slug, entity_slug)
+    prompt = _build_image_prompt(project_slug, entity["display_name"], entity["type"], post.content.strip())
+    return {"prompt": prompt}
+
 
 @app.post("/projects/{project_slug}/entities/{entity_slug}/generate-image", status_code=201)
 async def generate_image(
@@ -1388,76 +1479,7 @@ async def generate_image(
     post = _read_entity_file(project_slug, entity_slug)
     body_text = post.content.strip()
 
-    import re as _re
-
-    display_name = entity["display_name"]
-    entity_type  = entity["type"]
-
-    # Strip token syntax from body text
-    if body_text:
-        clean_body = _re.sub(r'@@([^@]+)@@|##([^#]+)##|~~([^~]+)~~|\?\?([^?]+)\?\?', lambda m: next(g for g in m.groups() if g is not None), body_text)
-        clean_body = _re.sub(r'\s+', ' ', clean_body).strip()
-    else:
-        clean_body = ""
-
-    # Fetch project-level art style
-    art_style = ""
-    try:
-        for gf in (PROJECTS_ROOT / project_slug / "content").glob("*.md"):
-            gpost = fm.load(str(gf))
-            if gpost.metadata.get("type") == "game":
-                art_style = gpost.metadata.get("art_style", "").strip()
-                break
-    except Exception:
-        pass
-
-    _PROMPT_TEMPLATES: dict[str, str] = {
-        "character": (
-            "{art_style_clause}"
-            "Full body character concept art, {description}, "
-            "standing in a neutral A-pose or relaxed straight pose, "
-            "entire body visible from head to toe with feet fully in frame, "
-            "no cropping, clean isolated view, "
-            "plain neutral light gray seamless background, "
-            "studio lighting, soft even illumination, no shadows, "
-            "no environment, no unrelated props or background elements, "
-            "no text, no logos, no watermarks, "
-            "highly detailed, clean lines, "
-            "professional character design sheet style."
-        ),
-        "item": (
-            "{art_style_clause}"
-            "Full view game item sprite of {description}, "
-            "centered, entire object clearly visible, "
-            "isolated on plain light gray background, "
-            "soft even illumination, minimal soft shadow, "
-            "clean sharp details, no cropping, no background elements, "
-            "no text, no logos, "
-            "professional 2D inventory icon / sprite sheet style, "
-            "crisp edges, high resolution game asset."
-        ),
-        "location": (
-            "{art_style_clause}"
-            "Wide horizontal full background image for a 2D point-and-click adventure game, "
-            "{description}, "
-            "complete scene fully visible edge to edge, no cropping, "
-            "clean illustrative adventure game style, "
-            "depth with clear layers (foreground, midground, distant background), "
-            "soft natural lighting, "
-            "empty of characters and interactive items, "
-            "plain and neutral composition, "
-            "highly detailed yet stylized, "
-            "professional game environment art, "
-            "no text, no logos."
-        ),
-    }
-
-    description = clean_body if clean_body else display_name
-    art_style_clause = f"Art style: {art_style}. " if art_style else ""
-    prompt = _PROMPT_TEMPLATES[entity_type].format(
-        description=description,
-        art_style_clause=art_style_clause,
-    )
+    prompt = _build_image_prompt(project_slug, entity["display_name"], entity["type"], body_text)
 
     log.info("Generating image for %s/%s: %s", project_slug, entity_slug, prompt[:80])
     # Log full prompt and response to dedicated file for inspection

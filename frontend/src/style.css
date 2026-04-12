@@ -219,6 +219,8 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 .asset-btn { padding: 0.3rem 0.6rem; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius); cursor: pointer; font-size: 0.8rem; }
 .asset-btn:hover { border-color: var(--accent); }
 .asset-btn-generate { border-color: #6dbf7f; color: #6dbf7f; }
+.asset-btn-clipboard { background: var(--bg3); border-color: var(--border); color: var(--text-dim); }
+.asset-btn-clipboard:hover { border-color: var(--accent); color: var(--accent); }
 .gen-error { font-size: 0.72rem; color: #e07070; padding: 0.3rem 0; word-break: break-word; }
 .share-panel { border-bottom: 1px solid var(--border); }
 .share-toggle { width: 100%; text-align: left; padding: 0.3rem 0.6rem; background: none; border: none; color: var(--text-dim); font-size: 0.75rem; cursor: pointer; }
