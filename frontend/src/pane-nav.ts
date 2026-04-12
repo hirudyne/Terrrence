@@ -4,6 +4,16 @@ import { showLogin } from './login'
 
 type ViewMode = 'tree' | 'tabs'
 
+function deriveSlug(displayName: string, entityType?: string): string {
+  if (entityType === 'chapter' || /^[Cc]hapter\s+\d/.test(displayName)) {
+    const m = displayName.match(/^[Cc]hapter\s+(\d+)/)
+    if (m) return `C${m[1]}`
+  }
+  const ascii = displayName.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  const slug = ascii.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  return slug.slice(0, 64) || 'entity'
+}
+
 const ALL_TYPES = ['game', 'chapter', 'location', 'character', 'item', 'event', 'conversation'] as const
 const TYPE_PREFIX: Record<string, string> = {
   game:         'G',
@@ -586,14 +596,23 @@ export class NavPane {
 
       typeSelect.onchange = () => showParentRow(typeSelect.value)
 
-      const slugInput  = this._field(form, 'Slug', 'text', 'e.g. C1 or old_barn')
+      const slugInput  = this._field(form, 'Slug', 'text', '')
+      slugInput.disabled = true
+      slugInput.style.opacity = '0.5'
+      slugInput.style.cursor = 'default'
       const nameInput  = this._field(form, 'Display name', 'text', 'e.g. Chapter 1 - Bundle Beginnings')
+      nameInput.oninput = () => {
+        slugInput.value = deriveSlug(nameInput.value.trim(), typeSelect.value)
+      }
+      typeSelect.addEventListener('change', () => {
+        if (nameInput.value.trim()) slugInput.value = deriveSlug(nameInput.value.trim(), typeSelect.value)
+      })
 
       this._submitBtn(form, 'Create', async () => {
         const type = typeSelect.value
-        const slug = slugInput.value.trim()
+        const slug = deriveSlug(nameInput.value.trim(), type)
         const name = nameInput.value.trim()
-        if (!slug || !name) { err('Slug and display name required.'); return }
+        if (!name) { err('Display name required.'); return }
         if (type === 'event' && chapters.length === 0) { err('Create a chapter first.'); return }
         if (type === 'conversation' && characters.length === 0) { err('Create a character first.'); return }
         const parentSlug = type === 'event' ? chapterSelect.value
