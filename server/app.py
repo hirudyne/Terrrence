@@ -1229,8 +1229,14 @@ class _ContentWatcher(FileSystemEventHandler):
 
 
 async def _reindex_entity(project_slug: str, entity_slug: str, path: Path) -> None:
+    """Run reindex in a thread so blocking DB ops don't stall the event loop."""
+    await asyncio.to_thread(_reindex_entity_sync, project_slug, entity_slug, path)
+
+
+def _reindex_entity_sync(project_slug: str, entity_slug: str, path: Path) -> None:
     try:
         post = fm.load(str(path))
+        # Separate connections so _rebuild_refs doesn't deadlock inside an open write txn
         with db() as conn:
             project = conn.execute(
                 "SELECT id FROM projects WHERE slug = ?", (project_slug,)
@@ -1248,7 +1254,7 @@ async def _reindex_entity(project_slug: str, entity_slug: str, path: Path) -> No
                     "UPDATE entities SET display_name = ?, updated_at = datetime('now') WHERE id = ?",
                     (display_name, entity["id"]),
                 )
-                _rebuild_refs(project_id, entity["id"], post.content)
+                entity_id = entity["id"]
             else:
                 entity_type = post.metadata.get("type", "location")
                 display_name = post.metadata.get("display_name", entity_slug)
@@ -1256,10 +1262,11 @@ async def _reindex_entity(project_slug: str, entity_slug: str, path: Path) -> No
                     "INSERT INTO entities (project_id, slug, type, display_name) VALUES (?, ?, ?, ?)",
                     (project_id, entity_slug, entity_type, display_name),
                 )
-                _rebuild_refs(project_id, cur.lastrowid, post.content)
+                entity_id = cur.lastrowid
+        # _rebuild_refs opens its own connection - must be outside the block above
+        _rebuild_refs(project_id, entity_id, post.content)
     except Exception as exc:
-        import logging
-        logging.getLogger("terrrence").warning("reindex_entity %s/%s: %s", project_slug, entity_slug, exc)
+        log.warning("reindex_entity %s/%s: %s", project_slug, entity_slug, exc)
 
 
 _observer: Observer | None = None
