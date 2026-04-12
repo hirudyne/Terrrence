@@ -56,6 +56,7 @@ export class PreviewPane {
   private currentSlug: string | null = null
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private _lastSnapshot: string = ''
+  private _generating: boolean = false
 
   constructor(container: HTMLElement) {
     this.el = container
@@ -96,7 +97,7 @@ export class PreviewPane {
             api.listEntityTags(s.projectSlug, this.currentSlug),
           ])
           const snapshot = JSON.stringify({ body: d.body, assets: a.map((x: Asset) => x.id), tags: t.map((x: {id:number}) => x.id) })
-          if (snapshot !== this._lastSnapshot && !this.el.querySelector('.game-settings-input:focus')) {
+          if (snapshot !== this._lastSnapshot && !this.el.querySelector('.game-settings-input:focus') && !this._generating) {
             this._lastSnapshot = snapshot
             this._render(d, a, t)
           }
@@ -327,6 +328,7 @@ export class PreviewPane {
         genBtn.textContent = 'Generating...'
         genError.style.display = 'none'
         genError.textContent = ''
+        this._generating = true
         try {
           await api.generateImage(projectSlug, entitySlug)
           setState({ previewEntitySlug: this.currentSlug }) // reload
@@ -336,6 +338,7 @@ export class PreviewPane {
           genError.textContent = msg
           genError.style.display = 'block'
         } finally {
+          this._generating = false
           genBtn.disabled = false
           genBtn.textContent = '+ Generate image'
         }
