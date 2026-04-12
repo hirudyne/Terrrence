@@ -212,6 +212,30 @@ export function getOrCreateEditor(
       navReloadTimer = setTimeout(() => {
         const nav = (window as any)._terrrenceNav
         if (nav) nav.load(project)
+        // Set preview to the token nearest the cursor
+        const doc = view.state.doc.toString()
+        const cursor = view.state.selection.main.head
+        const tokenRe = /(@@([^@]+)@@|##([^#]+)##|~~([^~]+)~~|\?\?([^?]+)\?\?|\u201c\u201c([^\u201c\u201d]+)\u201d\u201d)/g
+        const typeMap: Record<number, string> = { 2: 'location', 3: 'character', 4: 'item', 5: 'chapter', 6: 'conversation' }
+        let best: { displayName: string; type: string; dist: number } | null = null
+        let m: RegExpExecArray | null
+        while ((m = tokenRe.exec(doc)) !== null) {
+          const start = m.index
+          const end = m.index + m[0].length
+          const dist = cursor >= start && cursor <= end ? 0 : Math.min(Math.abs(cursor - start), Math.abs(cursor - end))
+          if (best === null || dist < best.dist) {
+            const grpIdx = [2,3,4,5,6].find(i => m![i] !== undefined)
+            if (grpIdx !== undefined) {
+              best = { displayName: m[grpIdx].trim(), type: typeMap[grpIdx], dist }
+            }
+          }
+        }
+        if (best && best.dist < 200) {
+          const parentSlug = (best.type === 'event' || best.type === 'conversation') ? entitySlug : undefined
+          api.ensureEntity(project, best.displayName, best.type, parentSlug)
+            .then(entity => { if (!entity.blocked && entity.slug) setState({ previewEntitySlug: entity.slug }) })
+            .catch(() => {})
+        }
       }, 2000)
     } catch (_) {}
   }
