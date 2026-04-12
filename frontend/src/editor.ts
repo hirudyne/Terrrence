@@ -30,29 +30,30 @@ function _detectCompletedToken(
   const closingChars = new Set(['@', '#', '~', '?', '\u201d'])
   if (!insertedText.split('').some(c => closingChars.has(c) || /\s/.test(c))) return null
 
-  const before = docAfter.slice(Math.max(0, insertedAt - 120), insertedAt + insertedText.length)
+  // Search backwards from cursor for a complete token ending exactly at cursor.
+  // Avoids the fixed-window bug where a slice starting mid-line can match wrong delimiters.
+  const cursorPos = insertedAt + insertedText.length
+  const doc = docAfter.slice(0, cursorPos)
 
-  // @@display@@
-  const locMatch = before.match(/@@([^@]+)@@$/)
-  if (locMatch) return { displayName: locMatch[1].trim(), type: 'location' }
+  function findToken(open: string, close: string, type: string): { displayName: string; type: string } | null {
+    if (!doc.endsWith(close)) return null
+    const contentEnd = doc.length - close.length
+    const openIdx = doc.lastIndexOf(open, contentEnd - 1)
+    if (openIdx === -1) return null
+    const content = doc.slice(openIdx + open.length, contentEnd)
+    if (content.includes(open[0])) return null
+    if (!content.trim()) return null
+    return { displayName: content.trim(), type }
+  }
 
-  // ##display##
-  const charMatch = before.match(/##([^#]+)##$/)
-  if (charMatch) return { displayName: charMatch[1].trim(), type: 'character' }
-
-  // ~~display~~
-  const itemMatch = before.match(/~~([^~]+)~~$/)
-  if (itemMatch) return { displayName: itemMatch[1].trim(), type: 'item' }
-
-  // ??display name??
-  const chapMatch = before.match(/\?\?([^?]+)\?\?$/)
-  if (chapMatch) return { displayName: chapMatch[1].trim(), type: 'chapter' }
-
-  // “conversation”
-  const convMatch = before.match(/\u201c\u201c([^\u201c\u201d]+)\u201d\u201d$/)
-  if (convMatch) return { displayName: convMatch[1].trim(), type: 'conversation' }
-
-  return null
+  return (
+    findToken('@@', '@@', 'location') ||
+    findToken('##', '##', 'character') ||
+    findToken('~~', '~~', 'item') ||
+    findToken('??', '??', 'chapter') ||
+    findToken('\u201c\u201c', '\u201d\u201d', 'conversation') ||
+    null
+  )
 }
 
 
