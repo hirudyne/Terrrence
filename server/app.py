@@ -54,6 +54,20 @@ def yjs_db():
 
 
 
+def _wipe_yjs_store() -> None:
+    """Clear all Yjs update rows so rooms start fresh from Markdown on disk.
+    Since the HTTP debounce is the reliable save path and Markdown is the
+    source of truth, stale Yjs state only causes content clobbering.
+    """
+    try:
+        yjs_conn = sqlite3.connect(YJS_STORE_PATH, timeout=5)
+        yjs_conn.execute("DELETE FROM yupdates")
+        yjs_conn.commit()
+        yjs_conn.close()
+    except Exception:
+        pass
+
+
 def _cleanup_yjs_orphans():
     with db() as conn:
         live_ids = {r[0] for r in conn.execute("SELECT id FROM entities").fetchall()}
@@ -777,6 +791,7 @@ _yjs_server_task: asyncio.Task | None = None
 
 @app.on_event("startup")
 async def startup():
+    _wipe_yjs_store()
     _cleanup_yjs_orphans()
     _prune_sessions()
 
