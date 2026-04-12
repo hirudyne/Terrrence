@@ -23,7 +23,8 @@ RUN pip install --break-system-packages \
     python-frontmatter \
     pyyaml \
     argon2-cffi \
-    python-multipart
+    python-multipart \
+    httpx
 
 WORKDIR /workspace
 

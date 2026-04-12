@@ -148,7 +148,7 @@ export class PreviewPane {
     }
 
     // Upload + associate controls
-    assetSection.appendChild(this._assetControls(detail.slug, state.projectSlug!))
+    assetSection.appendChild(this._assetControls(detail.slug, state.projectSlug!, detail.type))
     this.el.appendChild(assetSection)
   }
 
@@ -245,9 +245,31 @@ export class PreviewPane {
     return tile
   }
 
-  private _assetControls(entitySlug: string, projectSlug: string): HTMLElement {
+  private _assetControls(entitySlug: string, projectSlug: string, entityType: string): HTMLElement {
     const wrap = document.createElement('div')
     wrap.className = 'asset-controls'
+
+    // Generate image (location, character, item only)
+    const IMAGE_TYPES = new Set(['location', 'character', 'item'])
+    if (IMAGE_TYPES.has(entityType)) {
+      const genBtn = document.createElement('button')
+      genBtn.className = 'asset-btn asset-btn-generate'
+      genBtn.textContent = '+ Generate image'
+      genBtn.onclick = async () => {
+        genBtn.disabled = true
+        genBtn.textContent = 'Generating...'
+        try {
+          await api.generateImage(projectSlug, entitySlug)
+          setState({ previewEntitySlug: this.currentSlug }) // reload
+        } catch (e: any) {
+          alert('Image generation failed: ' + (e.message ?? e))
+        } finally {
+          genBtn.disabled = false
+          genBtn.textContent = '+ Generate image'
+        }
+      }
+      wrap.appendChild(genBtn)
+    }
 
     // Upload new file
     const uploadInput = document.createElement('input')

@@ -208,6 +208,9 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 .asset-controls { display: flex; flex-direction: column; gap: 0.4rem; }
 .asset-btn { padding: 0.3rem 0.6rem; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius); cursor: pointer; font-size: 0.8rem; }
 .asset-btn:hover { border-color: var(--accent); }
+.asset-btn-generate { border-color: #6dbf7f; color: #6dbf7f; }
+.asset-btn-generate:hover { background: #6dbf7f22; }
+.asset-btn-generate:disabled { opacity: 0.5; cursor: wait; }
 .asset-attach-row { display: flex; gap: 4px; align-items: center; }
 
 /* ---- Tags ---- */

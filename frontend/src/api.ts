@@ -75,6 +75,8 @@ export const api = {
     req<void>('DELETE', `/projects/${project}/entities/${entity}/assets/${asset_id}`),
   assetFileUrl: (project: string, asset_id: number) =>
     `/projects/${project}/assets/${asset_id}/file`,
+  generateImage: (project: string, entity: string) =>
+    req<Asset>('POST', `/projects/${project}/entities/${entity}/generate-image`),
 
   listTags: (project: string) =>
     req<{id:number;name:string}[]>('GET', `/projects/${project}/tags`),

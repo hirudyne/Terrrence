@@ -20,6 +20,16 @@ from pydantic import BaseModel
 
 DB_PATH     = Path(os.environ.get("TERRRENCE_DB",     "/workspace/data/terrrence.db"))
 COOKIE_NAME = "terrrence_session"
+
+def _load_secret(key: str) -> str | None:
+    """Read a secret from /workspace/.secrets file, falling back to env var."""
+    secrets_path = Path("/workspace/.secrets")
+    if secrets_path.exists():
+        for line in secrets_path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith(key + "="):
+                return line[len(key) + 1:].strip()
+    return os.environ.get(key)
 INSECURE    = os.environ.get("TERRRENCE_INSECURE_COOKIES", "0") == "1"
 
 ph  = PasswordHasher()
@@ -1171,6 +1181,99 @@ def disassociate_asset(
             "DELETE FROM asset_entities WHERE asset_id = ? AND entity_id = ?",
             (asset_id, entity["id"]),
         )
+
+
+# ---------------------------------------------------------------------------
+# Image generation
+# ---------------------------------------------------------------------------
+
+_IMAGE_TYPES = {"location", "character", "item"}
+
+@app.post("/projects/{project_slug}/entities/{entity_slug}/generate-image", status_code=201)
+async def generate_image(
+    project_slug: str,
+    entity_slug: str,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    import httpx, hashlib, mimetypes as _mimetypes, datetime
+
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+
+    with db() as conn:
+        entity = conn.execute(
+            "SELECT id, type, display_name FROM entities WHERE project_id = ? AND slug = ?",
+            (project["id"], entity_slug),
+        ).fetchone()
+    if not entity:
+        raise HTTPException(status_code=404, detail="entity not found")
+    if entity["type"] not in _IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="image generation only supported for location, character, and item entities")
+
+    xai_key = _load_secret("XAI_API_KEY")
+    if not xai_key:
+        raise HTTPException(status_code=500, detail="XAI_API_KEY not configured")
+
+    post = _read_entity_file(project_slug, entity_slug)
+    body_text = post.content.strip()
+
+    entity_type_label = entity["type"]
+    display_name = entity["display_name"]
+    prompt_parts = [f"A visual depiction of a {entity_type_label} named '{display_name}' from an adventure game."]
+    if body_text:
+        # Strip token syntax from body before including in prompt
+        import re as _re
+        clean_body = _re.sub(r'@@([^@]+)@@|##([^#]+)##|~~([^~]+)~~|\?\?([^?]+)\?\?', lambda m: next(g for g in m.groups() if g is not None), body_text)
+        clean_body = _re.sub(r'\s+', ' ', clean_body).strip()
+        if clean_body:
+            prompt_parts.append(clean_body)
+    prompt_parts.append("Stylised adventure game art.")
+    prompt = " ".join(prompt_parts)
+
+    log.info("Generating image for %s/%s: %s", project_slug, entity_slug, prompt[:80])
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://api.x.ai/v1/images/generations",
+            headers={"Authorization": f"Bearer {xai_key}", "Content-Type": "application/json"},
+            json={"model": "grok-2-image", "prompt": prompt, "n": 1},
+        )
+    if resp.status_code != 200:
+        log.error("xAI image generation failed: %s %s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail=f"xAI API error: {resp.status_code}")
+
+    result = resp.json()
+    image_url = result["data"][0]["url"]
+
+    # Download the image
+    async with httpx.AsyncClient(timeout=60) as client:
+        img_resp = await client.get(image_url)
+    if img_resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="failed to download generated image")
+
+    image_data = img_resp.content
+    sha256 = hashlib.sha256(image_data).hexdigest()
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"{entity_slug}_generated_{timestamp}.jpg"
+    rel_path = f"assets/{filename}"
+    dest = _asset_dir(project_slug) / filename
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(image_data)
+
+    mime = "image/jpeg"
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256) VALUES (?, ?, ?, ?, ?)",
+            (project["id"], rel_path, mime, len(image_data), sha256),
+        )
+        asset_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+            (asset_id, entity["id"], "generated"),
+        )
+
+    log.info("Image generated and saved: %s (asset %d)", filename, asset_id)
+    return {"id": asset_id, "rel_path": rel_path, "mime": mime, "bytes": len(image_data), "sha256": sha256}
 
 
 # ---------------------------------------------------------------------------
