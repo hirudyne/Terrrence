@@ -1252,6 +1252,7 @@ async def generate_image(
 
     _PROMPT_TEMPLATES: dict[str, str] = {
         "character": (
+            "{art_style_clause}"
             "Full body character concept art, {description}, "
             "standing in a neutral A-pose or relaxed straight pose, "
             "entire body visible from head to toe with feet fully in frame, "
@@ -1261,10 +1262,10 @@ async def generate_image(
             "no environment, no unrelated props or background elements, "
             "no text, no logos, no watermarks, "
             "highly detailed, clean lines, "
-            "professional character design sheet style"
-            "{art_style_clause}."
+            "professional character design sheet style."
         ),
         "item": (
+            "{art_style_clause}"
             "Full view game item sprite of {description}, "
             "centered, entire object clearly visible, "
             "isolated on plain light gray background, "
@@ -1272,10 +1273,10 @@ async def generate_image(
             "clean sharp details, no cropping, no background elements, "
             "no text, no logos, "
             "professional 2D inventory icon / sprite sheet style, "
-            "crisp edges, high resolution game asset"
-            "{art_style_clause}."
+            "crisp edges, high resolution game asset."
         ),
         "location": (
+            "{art_style_clause}"
             "Wide horizontal full background image for a 2D point-and-click adventure game, "
             "{description}, "
             "complete scene fully visible edge to edge, no cropping, "
@@ -1286,13 +1287,12 @@ async def generate_image(
             "plain and neutral composition, "
             "highly detailed yet stylized, "
             "professional game environment art, "
-            "no text, no logos"
-            "{art_style_clause}."
+            "no text, no logos."
         ),
     }
 
     description = clean_body if clean_body else display_name
-    art_style_clause = f", {art_style}" if art_style else ""
+    art_style_clause = f"Art style: {art_style}. " if art_style else ""
     prompt = _PROMPT_TEMPLATES[entity_type].format(
         description=description,
         art_style_clause=art_style_clause,
