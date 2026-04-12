@@ -29,11 +29,36 @@ export class NavPane {
   constructor(container: HTMLElement) {
     this.el = container
     this.el.className = 'nav-pane'
+    let _lastProject: string | null = null
+    let _lastActive: string | null = null
     subscribe(state => {
-      if (state.projectSlug) this.load(state.projectSlug)
+      if (state.projectSlug && state.projectSlug !== _lastProject) {
+        _lastProject = state.projectSlug
+        this.load(state.projectSlug)
+        return
+      }
+      // Update active highlight without full re-render
+      if (state.activeEntitySlug !== _lastActive) {
+        _lastActive = state.activeEntitySlug
+        this._updateActiveHighlight(state.activeEntitySlug)
+      }
     })
     api.version().then(v => { this._version = v.version; this._renderVersionLabel() }).catch(() => {})
     this._render()
+  }
+
+  private _updateActiveHighlight(activeSlug: string | null) {
+    // Update active class on nav items without rebuilding DOM
+    this.el.querySelectorAll('.nav-entity-item, .nav-chapter-group .nav-entity-item').forEach(el => {
+      const name = el.querySelector('.nav-entity-name') as HTMLElement | null
+      if (!name) return
+      const slug = name.title
+      if (activeSlug && slug === activeSlug) {
+        el.classList.add('active')
+      } else {
+        el.classList.remove('active')
+      }
+    })
   }
 
   async load(projectSlug: string) {
