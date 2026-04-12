@@ -294,3 +294,7 @@ export function getOrCreateEditor(
 export function destroyEditor(entitySlug: string) {
   _instances.get(entitySlug)?.destroy()
 }
+
+export function editorIsCached(entitySlug: string): boolean {
+  return _instances.has(entitySlug)
+}

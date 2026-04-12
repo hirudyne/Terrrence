@@ -2,7 +2,7 @@ import { api } from './api'
 // Main editor pane - tabs for open entities, CodeMirror 6 + Yjs per entity.
 
 import { getState, setState, subscribe } from './state'
-import { getOrCreateEditor, destroyEditor, refreshEntityCache } from './editor'
+import { getOrCreateEditor, destroyEditor, refreshEntityCache, editorIsCached } from './editor'
 
 export class EditorPane {
   private el: HTMLElement
@@ -109,6 +109,19 @@ export class EditorPane {
     if (!state.projectSlug) return
 
     const seq = ++this._mountSeq
+
+    // If this editor instance is already cached, show it immediately
+    // without a server round-trip
+    const cached = editorIsCached(slug)
+    if (cached) {
+      this.editorArea.innerHTML = ''
+      const wrap = document.createElement('div')
+      wrap.style.height = '100%'
+      this.editorArea.appendChild(wrap)
+      getOrCreateEditor(slug, 'unknown', wrap, '', (_content) => {})
+      return
+    }
+
     this.editorArea.innerHTML = ''
 
     const detail = await api.getEntity(state.projectSlug, slug)

@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("terrrence")
 import secrets
 import sqlite3
 from contextlib import contextmanager
@@ -706,6 +713,7 @@ def update_entity(
         )
     _rebuild_refs(project["id"], entity["id"], new_body,
                   entity_type=entity["type"], project_slug=project_slug)
+    log.debug("Saved %s/%s (%d bytes)", project_slug, entity_slug, len(new_body))
     return {"slug": entity_slug, "display_name": new_display_name, "type": entity["type"]}
 
 
@@ -728,6 +736,7 @@ class _TerrrenceYStore(SQLiteYStore):
 
 async def _flush_room_to_markdown(room_name: str) -> None:
     """Serialize the Yjs doc for a room to its Markdown file on disk."""
+    log.info("Flushing Yjs room to disk: %s", room_name)
     try:
         parts = room_name.split("/", 1)
         if len(parts) != 2:
@@ -791,6 +800,7 @@ _yjs_server_task: asyncio.Task | None = None
 
 @app.on_event("startup")
 async def startup():
+    log.info("Terrrence starting up")
     _wipe_yjs_store()
     _cleanup_yjs_orphans()
     _prune_sessions()
@@ -802,6 +812,8 @@ async def startup():
             await asyncio.get_event_loop().create_future()  # run forever
 
     _yjs_server_task = asyncio.create_task(_run())
+    await _yjs_server.started.wait()
+    log.info("Yjs WebSocket server ready")
 
 
 def _prune_sessions() -> None:
@@ -843,12 +855,16 @@ async def yjs_ws(
     project_slug: str,
     entity_slug: str,
 ):
-    # Delegate to the ASGI server directly via the raw ASGI interface.
-    # This gives ypy-websocket its own ASGIWebsocket with correct path and
-    # disconnect handling, instead of our hand-rolled adapter.
+    log.info("Yjs WS connect: %s/%s", project_slug, entity_slug)
     scope = websocket.scope
     scope["path"] = f"/{project_slug}/{entity_slug}"
-    await _yjs_asgi(scope, websocket._receive, websocket._send)
+    try:
+        await _yjs_asgi(scope, websocket._receive, websocket._send)
+    except Exception as exc:
+        log.error("Yjs WS error %s/%s: %s", project_slug, entity_slug, exc)
+        raise
+    finally:
+        log.info("Yjs WS disconnect: %s/%s", project_slug, entity_slug)
 
 
 # ---------------------------------------------------------------------------
