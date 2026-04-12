@@ -584,6 +584,7 @@ def get_entity(
 class UpdateEntityBody(BaseModel):
     display_name: Optional[str] = None
     body: Optional[str] = None
+    meta: Optional[dict] = None
 
 
 
@@ -683,7 +684,16 @@ def update_entity(
     new_display_name = body.display_name.strip() if body.display_name is not None else entity["display_name"]
     new_body         = body.body if body.body is not None else post.content
 
-    _write_entity_file(project_slug, entity_slug, new_display_name, entity["type"], new_body)
+    # Merge incoming meta with existing, stripping reserved keys
+    reserved = {"slug", "type", "display_name"}
+    existing_meta = {k: v for k, v in post.metadata.items() if k not in reserved}
+    if body.meta is not None:
+        new_meta = {k: v for k, v in body.meta.items() if k not in reserved}
+        existing_meta.update(new_meta)
+    else:
+        new_meta = existing_meta
+
+    _write_entity_file(project_slug, entity_slug, new_display_name, entity["type"], new_body, extra_meta=existing_meta)
 
     with db() as conn:
         conn.execute(
@@ -1227,6 +1237,20 @@ async def generate_image(
         clean_body = _re.sub(r'\s+', ' ', clean_body).strip()
         if clean_body:
             prompt_parts.append(clean_body)
+    # Inject project-level art style from game entity frontmatter
+    try:
+        import glob as _glob
+        game_files = list((PROJECTS_ROOT / project_slug / "content").glob("*.md"))
+        for gf in game_files:
+            gpost = fm.load(str(gf))
+            if gpost.metadata.get("type") == "game":
+                for key in ("art_style", "art_palette", "art_references"):
+                    val = gpost.metadata.get(key, "").strip()
+                    if val:
+                        prompt_parts.append(f"{key.replace('_', ' ').title()}: {val}.")
+                break
+    except Exception:
+        pass
     prompt_parts.append("Stylised adventure game art.")
     prompt = " ".join(prompt_parts)
 

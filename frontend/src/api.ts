@@ -77,6 +77,8 @@ export const api = {
     `/projects/${project}/assets/${asset_id}/file`,
   generateImage: (project: string, entity: string) =>
     req<Asset>('POST', `/projects/${project}/entities/${entity}/generate-image`),
+  updateEntityMeta: (project: string, entity: string, meta: Record<string, string>) =>
+    req<unknown>('PATCH', `/projects/${project}/entities/${entity}`, { meta }),
 
   listTags: (project: string) =>
     req<{id:number;name:string}[]>('GET', `/projects/${project}/tags`),
