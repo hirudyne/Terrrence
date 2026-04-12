@@ -317,20 +317,31 @@ export class PreviewPane {
       const genBtn = document.createElement('button')
       genBtn.className = 'asset-btn asset-btn-generate'
       genBtn.textContent = '+ Generate image'
+
+      const genError = document.createElement('div')
+      genError.className = 'gen-error'
+      genError.style.display = 'none'
+
       genBtn.onclick = async () => {
         genBtn.disabled = true
         genBtn.textContent = 'Generating...'
+        genError.style.display = 'none'
+        genError.textContent = ''
         try {
           await api.generateImage(projectSlug, entitySlug)
           setState({ previewEntitySlug: this.currentSlug }) // reload
         } catch (e: any) {
-          alert('Image generation failed: ' + (e.message ?? e))
+          const msg = e?.message ?? String(e)
+          console.debug('[terrrence] generateImage error', e)
+          genError.textContent = msg
+          genError.style.display = 'block'
         } finally {
           genBtn.disabled = false
           genBtn.textContent = '+ Generate image'
         }
       }
       wrap.appendChild(genBtn)
+      wrap.appendChild(genError)
     }
 
     // Upload new file

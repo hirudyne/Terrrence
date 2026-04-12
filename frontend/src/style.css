@@ -209,6 +209,16 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 .asset-btn { padding: 0.3rem 0.6rem; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius); cursor: pointer; font-size: 0.8rem; }
 .asset-btn:hover { border-color: var(--accent); }
 .asset-btn-generate { border-color: #6dbf7f; color: #6dbf7f; }
+.gen-error { font-size: 0.72rem; color: #e07070; padding: 0.3rem 0; word-break: break-word; }
+.share-panel { border-bottom: 1px solid var(--border); }
+.share-toggle { width: 100%; text-align: left; padding: 0.3rem 0.6rem; background: none; border: none; color: var(--text-dim); font-size: 0.75rem; cursor: pointer; }
+.share-toggle:hover { color: var(--text); }
+.share-toggle-open { color: var(--accent); }
+.share-form { display: flex; gap: 0.3rem; align-items: center; padding: 0 0.5rem 0.4rem; flex-wrap: wrap; }
+.share-input { flex: 1; min-width: 0; font-size: 0.75rem; }
+.share-msg { font-size: 0.72rem; width: 100%; padding-top: 0.1rem; }
+.share-msg-ok { color: #6dbf7f; }
+.share-msg-err { color: #e07070; }
 .asset-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 1000; cursor: zoom-out; }
 .asset-lightbox-img { max-width: 90vw; max-height: 90vh; object-fit: contain; border-radius: var(--radius); box-shadow: 0 0 40px rgba(0,0,0,0.8); }
 .game-settings { padding: 0.6rem 0.75rem; border-top: 1px solid var(--border); }

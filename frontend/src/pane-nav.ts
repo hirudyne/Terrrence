@@ -26,6 +26,7 @@ export class NavPane {
   private entities: Entity[] = []
   private selectedType: string = 'location'
   private _version: string = ''
+  private _ownedProjects: Set<string> = new Set()
 
   constructor(container: HTMLElement) {
     this.el = container
@@ -120,6 +121,11 @@ export class NavPane {
     header.appendChild(logoutBtn)
     this.el.appendChild(header)
 
+    // Share panel - only shown for owned projects
+    if (state.projectSlug && this._ownedProjects.has(state.projectSlug)) {
+      this.el.appendChild(this._sharePanel(state.projectSlug))
+    }
+
     if (!state.projectSlug) {
       this.el.appendChild(this._projectSelector())
       if (this._version) this._renderVersionLabel()
@@ -164,6 +170,66 @@ export class NavPane {
   }
 
   // ---- project selector (no project open) ----
+
+  private _sharePanel(projectSlug: string): HTMLElement {
+    const panel = document.createElement('div')
+    panel.className = 'share-panel'
+
+    const toggle = document.createElement('button')
+    toggle.className = 'share-toggle'
+    toggle.textContent = 'Share project'
+    panel.appendChild(toggle)
+
+    const form = document.createElement('div')
+    form.className = 'share-form'
+    form.style.display = 'none'
+
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.className = 'modal-input share-input'
+    input.placeholder = 'Key label to share with'
+
+    const btn = document.createElement('button')
+    btn.className = 'nav-mode-toggle'
+    btn.textContent = 'Share'
+
+    const msg = document.createElement('div')
+    msg.className = 'share-msg'
+
+    btn.onclick = async () => {
+      const label = input.value.trim()
+      if (!label) return
+      btn.disabled = true
+      msg.textContent = ''
+      try {
+        await api.shareProject(projectSlug, label)
+        msg.textContent = `Shared with '${label}'`
+        msg.className = 'share-msg share-msg-ok'
+        input.value = ''
+      } catch (e: any) {
+        msg.textContent = e.message ?? 'Failed'
+        msg.className = 'share-msg share-msg-err'
+      } finally {
+        btn.disabled = false
+      }
+    }
+
+    input.onkeydown = (e) => { if (e.key === 'Enter') btn.click() }
+
+    form.appendChild(input)
+    form.appendChild(btn)
+    form.appendChild(msg)
+    panel.appendChild(form)
+
+    toggle.onclick = () => {
+      const open = form.style.display === 'none'
+      form.style.display = open ? 'flex' : 'none'
+      toggle.classList.toggle('share-toggle-open', open)
+      if (open) input.focus()
+    }
+
+    return panel
+  }
 
   private _projectSelector(): HTMLElement {
     const wrap = document.createElement('div')
@@ -395,6 +461,7 @@ export class NavPane {
       form.appendChild(listWrap)
 
       api.listProjects().then(projects => {
+        this._ownedProjects = new Set(projects.filter(p => p.owned).map(p => p.slug))
         listWrap.innerHTML = ''
         if (projects.length === 0) {
           listWrap.innerHTML = '<span class="modal-hint">No projects yet.</span>'
