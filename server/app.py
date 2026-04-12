@@ -1263,7 +1263,11 @@ async def generate_image(
         )
     if resp.status_code != 200:
         log.error("xAI image generation failed: %s %s", resp.status_code, resp.text)
-        raise HTTPException(status_code=502, detail=f"xAI API error: {resp.status_code}")
+        try:
+            xai_detail = resp.json().get("error") or resp.text
+        except Exception:
+            xai_detail = resp.text
+        raise HTTPException(status_code=502, detail=f"xAI: {xai_detail}")
 
     result = resp.json()
     image_url = result["data"][0]["url"]
