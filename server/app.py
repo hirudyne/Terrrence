@@ -533,6 +533,160 @@ def delete_entity(
         entity_path.unlink()
 
 
+
+class RenameEntityBody(BaseModel):
+    display_name: str
+
+
+@app.post("/projects/{project_slug}/entities/{entity_slug}/rename", status_code=200)
+def rename_entity(
+    project_slug: str,
+    entity_slug: str,
+    body: RenameEntityBody,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    """Rename an entity: updates display_name, derives new slug, renames file,
+    updates all slug references in other entity files (connections frontmatter),
+    updates DB rows. Chapters and game entities: display_name updated but slug unchanged."""
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+
+    new_display_name = body.display_name.strip()
+    if not new_display_name:
+        raise HTTPException(status_code=422, detail="display_name required")
+
+    with db() as conn:
+        entity = conn.execute(
+            "SELECT id, type, display_name FROM entities WHERE project_id = ? AND slug = ?",
+            (project["id"], entity_slug),
+        ).fetchone()
+        if not entity:
+            raise HTTPException(status_code=404, detail="entity not found")
+
+    entity_type = entity["type"]
+    old_slug = entity_slug
+
+    # Chapters and game: only update display_name, no slug change
+    slug_changes = entity_type not in ("chapter", "game")
+    new_slug = _derive_slug(new_display_name, entity_type) if slug_changes else old_slug
+
+    if new_slug != old_slug and slug_changes:
+        # Check for collision
+        with db() as conn:
+            existing = conn.execute(
+                "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+                (project["id"], new_slug),
+            ).fetchone()
+            if existing:
+                raise HTTPException(status_code=409, detail=f"slug '{new_slug}' already exists")
+
+    # Read current file
+    old_post = _read_entity_file(project_slug, old_slug)
+    extra_meta = {k: v for k, v in old_post.metadata.items()
+                  if k not in ("slug", "type", "display_name")}
+
+    # Write updated file at old path first (display_name update applies regardless)
+    _write_entity_file(project_slug, old_slug, new_display_name, entity_type,
+                       old_post.content, extra_meta=extra_meta)
+
+    if slug_changes and new_slug != old_slug:
+        # Rename the file
+        old_path = _entity_path(project_slug, old_slug)
+        new_path = _entity_path(project_slug, new_slug)
+        old_path.rename(new_path)
+
+        # Re-write at new path with corrected slug in frontmatter
+        new_post = _read_entity_file(project_slug, new_slug)
+        new_extra = {k: v for k, v in new_post.metadata.items()
+                     if k not in ("slug", "type", "display_name")}
+        _write_entity_file(project_slug, new_slug, new_display_name, entity_type,
+                           new_post.content, extra_meta=new_extra)
+
+        # Update DB: entity slug and display_name
+        with db() as conn:
+            conn.execute(
+                "UPDATE entities SET slug = ?, display_name = ? WHERE id = ?",
+                (new_slug, new_display_name, entity["id"]),
+            )
+            # Update parent_slug references in DB (children of this entity)
+            conn.execute(
+                "UPDATE entities SET parent_id = (SELECT id FROM entities WHERE project_id = ? AND slug = ?) "
+                "WHERE parent_id = ?",
+                (project["id"], new_slug, entity["id"]),
+            )
+
+        # Cascade slug update in connections frontmatter of all other location files
+        content_dir = PROJECTS_ROOT / project_slug / "content"
+        for md_path in content_dir.glob("*.md"):
+            if md_path.stem == new_slug:
+                continue
+            try:
+                post = fm.load(str(md_path))
+                changed = False
+                conns = post.metadata.get("connections")
+                if isinstance(conns, list):
+                    new_conns = []
+                    for half in conns:
+                        if not isinstance(half, dict):
+                            new_conns.append(half)
+                            continue
+                        h = dict(half)
+                        if h.get("to") == old_slug:
+                            h["to"] = new_slug
+                            changed = True
+                        # Rebuild id: always slugA__slugB alpha-sorted
+                        this_slug = md_path.stem
+                        other_slug = h.get("to", "")
+                        new_id = "__".join(sorted([this_slug, other_slug]))
+                        if h.get("id") != new_id:
+                            h["id"] = new_id
+                            changed = True
+                        new_conns.append(h)
+                    if changed:
+                        post.metadata["connections"] = new_conns
+                        with open(str(md_path), "w", encoding="utf-8") as f:
+                            f.write(fm.dumps(post))
+            except Exception as e:
+                log.warning("rename cascade: failed to update %s: %s", md_path, e)
+
+        # Also update connections in the renamed entity's own file
+        try:
+            post = fm.load(str(_entity_path(project_slug, new_slug)))
+            conns = post.metadata.get("connections")
+            if isinstance(conns, list):
+                new_conns = []
+                for half in conns:
+                    if not isinstance(half, dict):
+                        new_conns.append(half)
+                        continue
+                    h = dict(half)
+                    other_slug = h.get("to", "")
+                    new_id = "__".join(sorted([new_slug, other_slug]))
+                    if h.get("id") != new_id:
+                        h["id"] = new_id
+                    new_conns.append(h)
+                post.metadata["connections"] = new_conns
+                post.metadata["slug"] = new_slug
+                with open(str(_entity_path(project_slug, new_slug)), "w", encoding="utf-8") as f:
+                    f.write(fm.dumps(post))
+        except Exception as e:
+            log.warning("rename cascade: failed to update own connections in %s: %s", new_slug, e)
+
+        # Rebuild refs for the renamed entity
+        _rebuild_refs(project["id"], entity["id"], old_post.content,
+                      entity_type=entity_type, project_slug=project_slug)
+
+    else:
+        # No slug change: just update display_name in DB
+        with db() as conn:
+            conn.execute(
+                "UPDATE entities SET display_name = ? WHERE id = ?",
+                (new_display_name, entity["id"]),
+            )
+
+    return {"slug": new_slug, "display_name": new_display_name, "type": entity_type}
+
+
 @app.get("/projects/{project_slug}/entities")
 def list_entities(
     project_slug: str,

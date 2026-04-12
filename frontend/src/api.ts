@@ -90,4 +90,6 @@ export const api = {
     req<void>('DELETE', `/projects/${project}/entities/${entity}/tags/${encodeURIComponent(tag_name)}`),
   updateEntity: (project: string, slug: string, data: { display_name?: string; body?: string }) =>
     req<Entity>('PATCH', `/projects/${project}/entities/${slug}`, data),
+  renameEntity: (project: string, slug: string, display_name: string) =>
+    req<Entity & { slug: string }>('POST', `/projects/${project}/entities/${slug}/rename`, { display_name }),
 }

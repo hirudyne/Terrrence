@@ -82,10 +82,52 @@ export class PreviewPane {
     // -- header --
     const header = document.createElement('div')
     header.className = 'preview-header'
-    header.innerHTML = `
-      <span class="preview-type-badge ${detail.type}">${TYPE_PREFIX[detail.type] ?? ''}</span>
-      <span class="preview-title">${escapeHtml(detail.display_name)}</span>
-      <span class="preview-slug">${escapeHtml(detail.slug)}</span>`
+
+    const typeBadge = document.createElement('span')
+    typeBadge.className = `preview-type-badge ${detail.type}`
+    typeBadge.textContent = TYPE_PREFIX[detail.type] ?? ''
+    header.appendChild(typeBadge)
+
+    const nameInput = document.createElement('input')
+    nameInput.type = 'text'
+    nameInput.className = 'preview-title-input'
+    nameInput.value = detail.display_name
+    nameInput.spellcheck = false
+    nameInput.title = 'Edit display name'
+
+    const slugSpan = document.createElement('span')
+    slugSpan.className = 'preview-slug'
+    slugSpan.textContent = detail.slug
+
+    let _renameTimer: ReturnType<typeof setTimeout> | null = null
+    let _currentSlug = detail.slug
+
+    nameInput.oninput = () => {
+      if (_renameTimer) clearTimeout(_renameTimer)
+      _renameTimer = setTimeout(async () => {
+        const newName = nameInput.value.trim()
+        if (!newName || newName === detail.display_name) return
+        const project = getState().projectSlug
+        if (!project) return
+        try {
+          const result = await api.renameEntity(project, _currentSlug, newName)
+          detail.display_name = result.display_name
+          _currentSlug = result.slug
+          slugSpan.textContent = result.slug
+          // If slug changed, update state so editor tabs etc. reflect new slug
+          if (result.slug !== detail.slug) {
+            detail.slug = result.slug
+            setState({ previewEntitySlug: result.slug })
+          }
+        } catch (e: any) {
+          nameInput.value = detail.display_name
+          console.error('[terrrence] rename failed', e)
+        }
+      }, 800)
+    }
+
+    header.appendChild(nameInput)
+    header.appendChild(slugSpan)
     this.el.appendChild(header)
 
     // -- body --
