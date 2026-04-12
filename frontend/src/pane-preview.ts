@@ -11,7 +11,7 @@ const TYPE_PREFIX: Record<string, string> = {
   conversation: '“”',
 }
 
-const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?|\u201c[^\u201c\u201d]+\u201d)/g
+const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?|\u201c\u201c[^\u201c\u201d]+\u201d\u201d)/g
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

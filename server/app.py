@@ -352,7 +352,7 @@ REF_PATTERNS = [
     (re.compile(r'~~([^~]+)~~'),             "item"),
     (re.compile(r'!!([^!]+)!!([^!]+)!!'),    "event"),
     (re.compile(r'\?\?([^?]+)\?\?'),           "chapter"),
-    (re.compile(r'\u201c([^\u201c\u201d]+)\u201d'), "conversation"),
+    (re.compile(r'\u201c\u201c([^\u201c\u201d]+)\u201d\u201d'), "conversation"),
 ]
 
 

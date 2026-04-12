@@ -17,7 +17,7 @@ import { getState, setState } from './state'
 // @@display@@  ##display##  ~~display~~  ??slug??  !!trigger!!effect!!
 // ---------------------------------------------------------------------------
 
-const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?|\u201c[^\u201c\u201d]+\u201d)/g
+const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?|\u201c\u201c[^\u201c\u201d]+\u201d\u201d)/g
 
 // A token is "committed" when its closing delimiter has just been typed.
 // Returns { displayName, type } or null.
@@ -49,7 +49,7 @@ function _detectCompletedToken(
   if (chapMatch) return { displayName: chapMatch[1].trim(), type: 'chapter' }
 
   // “conversation”
-  const convMatch = before.match(/\u201c([^\u201c\u201d]+)\u201d$/)
+  const convMatch = before.match(/\u201c\u201c([^\u201c\u201d]+)\u201d\u201d$/)
   if (convMatch) return { displayName: convMatch[1].trim(), type: 'conversation' }
 
   return null
@@ -112,10 +112,10 @@ export async function refreshEntityCache(projectSlug: string) {
 
 function terrrenceComplete(context: CompletionContext): CompletionResult | null {
   // Match after opening delimiter: @@ ## ~~ ??
-  const word = context.matchBefore(/(@@|##|~~|\?\?|\u201c)[^@#~?\u201c\u201d]*/) 
+  const word = context.matchBefore(/(@@|##|~~|\?\?|\u201c\u201c)[^\u201c\u201d]*/) 
   if (!word || (word.from === word.to && !context.explicit)) return null
 
-  const prefix = word.text.slice(0, 1) === '\u201c' ? '\u201c' : word.text.slice(0, 2)
+  const prefix = word.text.startsWith('\u201c\u201c') ? '\u201c\u201c' : word.text.startsWith('\u201c') ? '\u201c\u201c' : word.text.slice(0, 2)
   const typeMap: Record<string, string> = {
     '@@': 'location', '##': 'character', '~~': 'item', '??': 'chapter', '\u201c': 'conversation',
   }
