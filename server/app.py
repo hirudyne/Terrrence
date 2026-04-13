@@ -1486,7 +1486,7 @@ async def generate_voice(
         vox_payload["description"] = voice_description
 
     async with _httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post("http://purpose-voxpop:8000/generate", json=vox_payload)
+        resp = await client.post("http://purpose-voxpop:8000/synthesise", json=vox_payload)
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"voxpop: {resp.text[:200]}")
 
