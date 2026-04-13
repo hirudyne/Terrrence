@@ -259,7 +259,7 @@ export class ConversationEditor {
     ))
 
     // Lines
-    card.appendChild(this._renderLines(g.lines, () => { this._save(); this._render() }))
+    card.appendChild(this._renderLines(g.lines, () => { this._save(); this._render() }, g.id))
 
     return card
   }
@@ -353,7 +353,7 @@ export class ConversationEditor {
     card.appendChild(this._triggersRow(o.triggers, (v) => { o.triggers = v || null; this._save() }))
 
     // Lines
-    card.appendChild(this._renderLines(o.lines, () => { this._save(); this._render() }))
+    card.appendChild(this._renderLines(o.lines, () => { this._save(); this._render() }, o.id))
 
     // Response menu (recursive, collapsible)
     const subToggle = document.createElement('button')
@@ -385,12 +385,12 @@ export class ConversationEditor {
   // Lines editor
   // -------------------------------------------------------------------------
 
-  private _renderLines(lines: ConvLine[], onSave: () => void): HTMLElement {
+  private _renderLines(lines: ConvLine[], onSave: () => void, containerId: string = ''): HTMLElement {
     const wrap = document.createElement('div')
     wrap.className = 'conv-lines'
 
     for (let i = 0; i < lines.length; i++) {
-      wrap.appendChild(this._renderLine(lines, i, onSave))
+      wrap.appendChild(this._renderLine(lines, i, onSave, containerId))
     }
 
     const addBtn = document.createElement('button')
@@ -404,7 +404,7 @@ export class ConversationEditor {
     return wrap
   }
 
-  private _renderLine(lines: ConvLine[], idx: number, onSave: () => void): HTMLElement {
+  private _renderLine(lines: ConvLine[], idx: number, onSave: () => void, containerId: string = ''): HTMLElement {
     const line = lines[idx]
     const row = document.createElement('div')
     row.className = 'conv-line-row'
@@ -432,6 +432,7 @@ export class ConversationEditor {
       if (valid && v !== line.speaker) {
         line.speaker = v
         onSave()
+        _updateTtsBtn()
       }
     }
     speakerInput.oninput = validateSpeaker
@@ -448,14 +449,73 @@ export class ConversationEditor {
     textInput.value = line.text
     textInput.placeholder = 'Dialogue text...'
     textInput.rows = 2
-    textInput.oninput = () => { line.text = textInput.value; onSave() }
+    textInput.oninput = () => {
+      line.text = textInput.value
+      onSave()
+      _updateTtsBtn()
+    }
     row.appendChild(textInput)
 
-    // Audio slot (inert for now)
+    // Audio slot - shows status, houses TTS button
     const audioSlot = document.createElement('div')
     audioSlot.className = 'conv-audio-slot'
-    audioSlot.title = 'Voice audio (TTS - coming soon)'
-    audioSlot.textContent = '♪'
+
+    const ttsBtn = document.createElement('button')
+    ttsBtn.className = 'conv-tts-btn'
+    ttsBtn.textContent = line.audio !== null ? '♪' : '⊕'
+
+    const _updateTtsBtn = () => {
+      const spk = speakerInput.value.trim()
+      const txt = textInput.value.trim()
+      const spkValid = speakerValid(spk, this._entityCache)
+      if (!txt && !spk) {
+        ttsBtn.disabled = true
+        ttsBtn.title = 'Speaker and text required'
+      } else if (!txt) {
+        ttsBtn.disabled = true
+        ttsBtn.title = 'Text required'
+      } else if (!spk || !spkValid) {
+        ttsBtn.disabled = true
+        ttsBtn.title = 'Valid speaker (##Character##) required'
+      } else {
+        ttsBtn.disabled = false
+        ttsBtn.title = line.audio !== null ? 'Re-generate voice' : 'Generate voice'
+      }
+    }
+    _updateTtsBtn()
+
+    ttsBtn.onclick = async () => {
+      const state = getState()
+      if (!state.projectSlug || !containerId) return
+      const spk = speakerInput.value.trim()
+      const txt = textInput.value.trim()
+      // Resolve speaker slug
+      const charEntry = this._entityCache.find(e =>
+        e.type === 'character' && spk === `##${e.display_name}##`
+      )
+      if (!charEntry || !txt) return
+      ttsBtn.disabled = true
+      ttsBtn.textContent = '...'
+      try {
+        const result = await api.generateVoice(state.projectSlug, this.entitySlug, {
+          line_id: containerId,
+          line_index: idx,
+          text: txt,
+          speaker_slug: charEntry.slug,
+        })
+        line.audio = result.asset_id
+        ttsBtn.textContent = '♪'
+        ttsBtn.title = 'Re-generate voice'
+        ttsBtn.disabled = false
+      } catch (e: any) {
+        ttsBtn.textContent = line.audio !== null ? '♪' : '⊕'
+        ttsBtn.title = `TTS failed: ${e?.message ?? e}`
+        ttsBtn.disabled = false
+        console.error('[terrrence] TTS error', e)
+      }
+    }
+
+    audioSlot.appendChild(ttsBtn)
     row.appendChild(audioSlot)
 
     // Line actions

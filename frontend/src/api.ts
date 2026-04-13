@@ -79,6 +79,8 @@ export const api = {
     req<Asset>('POST', `/projects/${project}/entities/${entity}/generate-image`),
   getImagePrompt: (project: string, entity: string) =>
     req<{ prompt: string }>('GET', `/projects/${project}/entities/${entity}/image-prompt`),
+  generateVoice: (project: string, entity: string, data: { line_id: string; line_index: number; text: string; speaker_slug: string }) =>
+    req<{ asset_id: number; filename: string }>('POST', `/projects/${project}/entities/${entity}/generate-voice`, data),
   updateEntityMeta: (project: string, entity: string, meta: Record<string, unknown>) =>
     req<unknown>('PATCH', `/projects/${project}/entities/${entity}`, { meta }),
 

@@ -154,6 +154,11 @@ export class PreviewPane {
       this.el.appendChild(this._renderGameSettings(detail, state.projectSlug!))
     }
 
+    // -- character settings (physical appearance, voice description) --
+    if (detail.type === 'character') {
+      this.el.appendChild(this._renderCharacterSettings(detail, state.projectSlug!))
+    }
+
     // -- tags --
     const tagSection = document.createElement('div')
     tagSection.className = 'preview-tags'
@@ -324,6 +329,58 @@ export class PreviewPane {
 
     section.appendChild(input)
     section.appendChild(counter)
+    return section
+  }
+
+  private _renderCharacterSettings(detail: EntityDetail, projectSlug: string): HTMLElement {
+    const section = document.createElement('div')
+    section.className = 'game-settings'
+
+    const mkField = (labelText: string, metaKey: string, placeholder: string, maxLen: number) => {
+      const heading = document.createElement('div')
+      heading.className = 'game-settings-heading'
+      heading.textContent = labelText
+      section.appendChild(heading)
+
+      const input = document.createElement('textarea')
+      input.className = 'modal-input game-settings-input'
+      input.placeholder = placeholder
+      input.maxLength = maxLen
+      input.value = (detail.meta as Record<string, string>)?.[metaKey] ?? ''
+
+      const counter = document.createElement('div')
+      counter.className = 'game-settings-counter'
+      const update = () => { counter.textContent = `${input.value.length} / ${maxLen}` }
+      update()
+
+      let saveTimer: ReturnType<typeof setTimeout> | null = null
+      input.oninput = () => {
+        update()
+        if (saveTimer) clearTimeout(saveTimer)
+        saveTimer = setTimeout(async () => {
+          try {
+            await api.updateEntityMeta(projectSlug, detail.slug, { [metaKey]: input.value.trim() })
+          } catch (e) { console.debug('[terrrence] char settings save error', e) }
+        }, 800)
+      }
+
+      section.appendChild(input)
+      section.appendChild(counter)
+    }
+
+    mkField(
+      'Physical Appearance',
+      'physical_appearance',
+      'e.g. tall, weathered skin, grey stubble, wears a canvas jacket',
+      500
+    )
+    mkField(
+      'Voice Description',
+      'voice_description',
+      'e.g. a gruff older male voice, slow deliberate speech, slight northern accent, close-sounding environment',
+      300
+    )
+
     return section
   }
 

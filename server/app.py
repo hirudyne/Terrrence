@@ -1451,6 +1451,125 @@ async def get_image_prompt(
     return {"prompt": prompt}
 
 
+
+class GenerateVoiceBody(BaseModel):
+    line_id: str          # greeting or option id
+    line_index: int       # index within lines[]
+    text: str
+    speaker_slug: str     # character entity slug for voice_description lookup
+
+
+@app.post("/projects/{project_slug}/entities/{entity_slug}/generate-voice", status_code=201)
+async def generate_voice(
+    project_slug: str,
+    entity_slug: str,         # conversation entity
+    body: GenerateVoiceBody,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    """Generate TTS audio for a conversation line via voxpop, save as asset, link to conversation."""
+    import httpx as _httpx, hashlib as _hashlib
+
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+
+    # Resolve voice_description from speaker character
+    voice_description: str | None = None
+    try:
+        char_post = _read_entity_file(project_slug, body.speaker_slug)
+        voice_description = char_post.metadata.get("voice_description", "").strip() or None
+    except Exception:
+        pass
+
+    # Build voxpop request
+    vox_payload: dict = {"text": body.text, "format": "wav"}
+    if voice_description:
+        vox_payload["description"] = voice_description
+
+    async with _httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post("http://purpose-voxpop:8000/generate", json=vox_payload)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"voxpop: {resp.text[:200]}")
+
+    wav_bytes = resp.content
+    sha256 = _hashlib.sha256(wav_bytes).hexdigest()
+
+    # Save WAV to assets directory
+    assets_dir = PROJECTS_ROOT / project_slug / "assets"
+    assets_dir.mkdir(exist_ok=True)
+    filename = f"voice_{entity_slug}_{body.line_id}_{body.line_index}_{sha256[:8]}.wav"
+    asset_path = assets_dir / filename
+    asset_path.write_bytes(wav_bytes)
+    rel_path = f"assets/{filename}"
+
+    # Insert or update asset row
+    with db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM assets WHERE project_id = ? AND sha256 = ?",
+            (project["id"], sha256),
+        ).fetchone()
+        if existing:
+            asset_id = existing["id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256) VALUES (?,?,?,?,?)",
+                (project["id"], rel_path, "audio/wav", len(wav_bytes), sha256),
+            )
+            asset_id = cur.lastrowid
+
+        # Associate with the conversation entity (role = voice)
+        conv_entity = conn.execute(
+            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            (project["id"], entity_slug),
+        ).fetchone()
+        if conv_entity:
+            conn.execute(
+                "INSERT OR IGNORE INTO asset_entities (asset_id, entity_id, role) VALUES (?,?,?)",
+                (asset_id, conv_entity["id"], "voice"),
+            )
+
+    # Update the audio field on the specific line in the conversation body
+    import json as _json
+    conv_post = _read_entity_file(project_slug, entity_slug)
+    try:
+        conv_data = _json.loads(conv_post.content) if conv_post.content.strip() else {}
+    except Exception:
+        conv_data = {}
+
+    def _patch_line(items: list, target_id: str, line_idx: int) -> bool:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if item.get("id") == target_id:
+                lines_list = item.get("lines", [])
+                if 0 <= line_idx < len(lines_list):
+                    lines_list[line_idx]["audio"] = asset_id
+                    return True
+            # recurse into response_menu
+            if _patch_line(item.get("response_menu", []), target_id, line_idx):
+                return True
+        return False
+
+    patched = False
+    for greeting in conv_data.get("greetings", []):
+        if isinstance(greeting, dict) and greeting.get("id") == body.line_id:
+            lines_list = greeting.get("lines", [])
+            if 0 <= body.line_index < len(lines_list):
+                lines_list[body.line_index]["audio"] = asset_id
+                patched = True
+                break
+
+    if not patched:
+        _patch_line(conv_data.get("menu", []), body.line_id, body.line_index)
+
+    new_body = _json.dumps(conv_data, indent=2)
+    _write_entity_file(project_slug, entity_slug, conv_post.metadata.get("display_name", entity_slug),
+                       "conversation", new_body,
+                       extra_meta={k: v for k, v in conv_post.metadata.items()
+                                   if k not in ("slug", "type", "display_name")})
+
+    return {"asset_id": asset_id, "filename": filename}
+
+
 @app.post("/projects/{project_slug}/entities/{entity_slug}/generate-image", status_code=201)
 async def generate_image(
     project_slug: str,
