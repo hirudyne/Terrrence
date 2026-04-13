@@ -1493,8 +1493,7 @@ async def register_voice(
     async with _httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             f"{VOXPOP_URL}/voices/{character_slug}",
-            content=audio_bytes,
-            headers={"Content-Type": "application/octet-stream"},
+            files={"file": ("voice.wav", audio_bytes, "application/octet-stream")},
         )
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"voxpop: {resp.text[:200]}")
