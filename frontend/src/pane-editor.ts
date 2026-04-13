@@ -162,10 +162,13 @@ export class EditorPane {
     this.editorArea.innerHTML = ''
     let conv = this.convEditors.get(slug)
     if (!conv) {
-      conv = new ConversationEditor(this.editorArea)
+      const wrapper = document.createElement('div')
+      wrapper.style.cssText = 'height:100%;display:flex;flex-direction:column;'
+      this.editorArea.appendChild(wrapper)
+      conv = new ConversationEditor(wrapper)
       this.convEditors.set(slug, conv)
     } else {
-      this.editorArea.appendChild(conv['el'])
+      this.editorArea.appendChild(conv.getEl())
     }
     conv.load(slug)
   }

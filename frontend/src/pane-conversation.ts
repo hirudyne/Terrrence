@@ -120,6 +120,8 @@ export class ConversationEditor {
     this.el.className = 'conv-editor'
   }
 
+  getEl(): HTMLElement { return this.el }
+
   async load(entitySlug: string): Promise<void> {
     this.entitySlug = entitySlug
     const state = getState()
