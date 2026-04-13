@@ -407,12 +407,12 @@ export class ConversationEditor {
   // Lines editor
   // -------------------------------------------------------------------------
 
-  private _renderLines(lines: ConvLine[], onSave: () => void, containerId: string = ''): HTMLElement {
+  private _renderLines(lines: ConvLine[], onStructure: () => void, containerId: string = ''): HTMLElement {
     const wrap = document.createElement('div')
     wrap.className = 'conv-lines'
 
     for (let i = 0; i < lines.length; i++) {
-      wrap.appendChild(this._renderLine(lines, i, onSave, containerId))
+      wrap.appendChild(this._renderLine(lines, i, onStructure, containerId))
     }
 
     const addBtn = document.createElement('button')
@@ -420,13 +420,13 @@ export class ConversationEditor {
     addBtn.textContent = '+ Line'
     addBtn.onclick = () => {
       lines.push({ speaker: '', text: '', audio: null })
-      onSave()
+      onStructure()
     }
     wrap.appendChild(addBtn)
     return wrap
   }
 
-  private _renderLine(lines: ConvLine[], idx: number, onSave: () => void, containerId: string = ''): HTMLElement {
+  private _renderLine(lines: ConvLine[], idx: number, onStructure: () => void, containerId: string = ''): HTMLElement {
     const line = lines[idx]
     const row = document.createElement('div')
     row.className = 'conv-line-row'
@@ -453,7 +453,7 @@ export class ConversationEditor {
       speakerErr.style.display = valid ? 'none' : 'inline'
       if (valid && v !== line.speaker) {
         line.speaker = v
-        onSave()
+        this._save()
         _updateTtsBtn()
       }
     }
@@ -473,7 +473,7 @@ export class ConversationEditor {
     textInput.rows = 2
     textInput.oninput = () => {
       line.text = textInput.value
-      onSave()
+      this._save()
       _updateTtsBtn()
     }
     row.appendChild(textInput)
@@ -613,18 +613,18 @@ export class ConversationEditor {
     if (idx > 0) {
       acts.appendChild(this._iconBtn('↑', 'Move up', () => {
         ;[lines[idx - 1], lines[idx]] = [lines[idx], lines[idx - 1]]
-        onSave()
+        onStructure()
       }))
     }
     if (idx < lines.length - 1) {
       acts.appendChild(this._iconBtn('↓', 'Move down', () => {
         ;[lines[idx], lines[idx + 1]] = [lines[idx + 1], lines[idx]]
-        onSave()
+        onStructure()
       }))
     }
     acts.appendChild(this._iconBtn('x', 'Delete line', () => {
       lines.splice(idx, 1)
-      onSave()
+      onStructure()
     }, true))
     row.appendChild(acts)
 
