@@ -156,7 +156,6 @@ export class ConversationEditor {
   // -------------------------------------------------------------------------
 
   private _render(): void {
-    console.debug('[terrrence] conv _render, el in DOM:', document.body.contains(this.el), 'greetings:', this.data.greetings.length, 'menu:', this.data.menu.length)
     this.el.innerHTML = ''
 
     const cols = document.createElement('div')
@@ -440,8 +439,8 @@ export class ConversationEditor {
 
     speakerWrap.appendChild(speakerInput)
     speakerWrap.appendChild(speakerErr)
-    attachSpeakerAutocomplete(speakerInput, () => this._entityCache)
     row.appendChild(speakerWrap)
+    attachSpeakerAutocomplete(speakerInput, () => this._entityCache)
 
     // Text input
     const textInput = document.createElement('textarea')
@@ -499,9 +498,9 @@ export class ConversationEditor {
     input.value = value ?? ''
     input.placeholder = 'event_slug or blank'
     input.oninput = () => onChange(input.value.trim())
-    attachEventAutocomplete(input, () => this._entityCache)
     row.appendChild(lbl)
     row.appendChild(input)
+    attachEventAutocomplete(input, () => this._entityCache)
     return row
   }
 
@@ -517,9 +516,9 @@ export class ConversationEditor {
     input.value = value ?? ''
     input.placeholder = 'event_slug or blank'
     input.oninput = () => onChange(input.value.trim())
-    attachEventAutocomplete(input, () => this._entityCache)
     row.appendChild(lbl)
     row.appendChild(input)
+    attachEventAutocomplete(input, () => this._entityCache)
     return row
   }
 
