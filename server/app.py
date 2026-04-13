@@ -1536,7 +1536,7 @@ async def generate_voice(
     api_key_id, _ = _require_session(session)
     project = _project_for_session(project_slug, api_key_id)
 
-    vox_payload: dict = {"voice": body.speaker_slug, "text": body.text, "format": "wav"}
+    vox_payload: dict = {"voice": body.speaker_slug, "text": body.text, "format": "wav", "style_strength": 1.9}
 
     async with _httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(f"{VOXPOP_URL}/synthesise", json=vox_payload)
