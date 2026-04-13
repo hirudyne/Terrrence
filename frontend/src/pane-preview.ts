@@ -381,7 +381,157 @@ export class PreviewPane {
       300
     )
 
+    // Voice reference recording
+    section.appendChild(this._renderVoiceRecorder(detail.slug, projectSlug))
+
     return section
+  }
+
+  private _renderVoiceRecorder(characterSlug: string, projectSlug: string): HTMLElement {
+    const wrap = document.createElement('div')
+    wrap.className = 'voice-recorder'
+
+    const heading = document.createElement('div')
+    heading.className = 'game-settings-heading'
+    heading.textContent = 'Voice Reference'
+    wrap.appendChild(heading)
+
+    const status = document.createElement('div')
+    status.className = 'voice-recorder-status'
+    wrap.appendChild(status)
+
+    const btnRow = document.createElement('div')
+    btnRow.className = 'voice-recorder-btns'
+    wrap.appendChild(btnRow)
+
+    const previewAudio = document.createElement('audio')
+    previewAudio.controls = true
+    previewAudio.className = 'voice-recorder-preview'
+    previewAudio.style.display = 'none'
+    wrap.appendChild(previewAudio)
+
+    let mediaStream: MediaStream | null = null
+    let mediaRecorder: MediaRecorder | null = null
+    let chunks: Blob[] = []
+    let recordedBlob: Blob | null = null
+
+    const recordBtn = document.createElement('button')
+    recordBtn.className = 'asset-btn'
+    recordBtn.textContent = '⏺ Record'
+
+    const stopBtn = document.createElement('button')
+    stopBtn.className = 'asset-btn'
+    stopBtn.textContent = '⏹ Stop'
+    stopBtn.style.display = 'none'
+
+    const uploadBtn = document.createElement('button')
+    uploadBtn.className = 'asset-btn asset-btn-generate'
+    uploadBtn.textContent = 'Register voice'
+    uploadBtn.style.display = 'none'
+
+    const deleteBtn = document.createElement('button')
+    deleteBtn.className = 'asset-btn'
+    deleteBtn.textContent = 'Delete voice'
+    deleteBtn.style.display = 'none'
+    deleteBtn.style.borderColor = 'var(--danger)'
+    deleteBtn.style.color = 'var(--danger)'
+
+    btnRow.appendChild(recordBtn)
+    btnRow.appendChild(stopBtn)
+    btnRow.appendChild(uploadBtn)
+    btnRow.appendChild(deleteBtn)
+
+    // Check if voice already registered
+    api.listVoices(projectSlug).then(({ voices }) => {
+      if (voices.includes(characterSlug)) {
+        status.textContent = 'Voice registered'
+        status.dataset.state = 'ok'
+        deleteBtn.style.display = 'inline-block'
+      } else {
+        status.textContent = 'No voice registered'
+        status.dataset.state = 'none'
+      }
+    }).catch(() => { status.textContent = 'Could not reach voice service' })
+
+    recordBtn.onclick = async () => {
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        chunks = []
+        recordedBlob = null
+        previewAudio.style.display = 'none'
+        uploadBtn.style.display = 'none'
+
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+          ? 'audio/ogg;codecs=opus'
+          : ''
+
+        mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined)
+        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+        mediaRecorder.onstop = () => {
+          recordedBlob = new Blob(chunks, { type: mediaRecorder!.mimeType || 'audio/wav' })
+          const url = URL.createObjectURL(recordedBlob)
+          previewAudio.src = url
+          previewAudio.style.display = 'block'
+          uploadBtn.style.display = 'inline-block'
+          status.textContent = 'Recording ready - preview and register'
+          status.dataset.state = 'ready'
+          mediaStream!.getTracks().forEach(t => t.stop())
+          mediaStream = null
+        }
+        mediaRecorder.start()
+        recordBtn.style.display = 'none'
+        stopBtn.style.display = 'inline-block'
+        status.textContent = 'Recording...'
+        status.dataset.state = 'recording'
+      } catch (e: any) {
+        status.textContent = `Mic error: ${e?.message ?? e}`
+      }
+    }
+
+    stopBtn.onclick = () => {
+      mediaRecorder?.stop()
+      stopBtn.style.display = 'none'
+      recordBtn.style.display = 'inline-block'
+    }
+
+    uploadBtn.onclick = async () => {
+      if (!recordedBlob) return
+      uploadBtn.disabled = true
+      uploadBtn.textContent = 'Registering...'
+      try {
+        const buf = await recordedBlob.arrayBuffer()
+        await api.registerVoice(projectSlug, characterSlug, buf)
+        status.textContent = 'Voice registered'
+        status.dataset.state = 'ok'
+        uploadBtn.style.display = 'none'
+        deleteBtn.style.display = 'inline-block'
+        previewAudio.style.display = 'none'
+      } catch (e: any) {
+        status.textContent = `Registration failed: ${e?.message ?? e}`
+      } finally {
+        uploadBtn.disabled = false
+        uploadBtn.textContent = 'Register voice'
+      }
+    }
+
+    deleteBtn.onclick = async () => {
+      if (!confirm('Delete registered voice for this character?')) return
+      deleteBtn.disabled = true
+      try {
+        await api.deleteVoice(projectSlug, characterSlug)
+        status.textContent = 'No voice registered'
+        status.dataset.state = 'none'
+        deleteBtn.style.display = 'none'
+      } catch (e: any) {
+        status.textContent = `Delete failed: ${e?.message ?? e}`
+      } finally {
+        deleteBtn.disabled = false
+      }
+    }
+
+    return wrap
   }
 
   private _assetControls(entitySlug: string, projectSlug: string, entityType: string): HTMLElement {

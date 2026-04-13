@@ -15,7 +15,7 @@ from pathlib import Path
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from fastapi import Cookie, FastAPI, HTTPException, Response
+from fastapi import Cookie, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 DB_PATH     = Path(os.environ.get("TERRRENCE_DB",     "/workspace/data/terrrence.db"))
@@ -1452,41 +1452,95 @@ async def get_image_prompt(
 
 
 
+# ---------------------------------------------------------------------------
+# Voice registration (voxpop 8001)
+# ---------------------------------------------------------------------------
+
+VOXPOP_URL = "http://purpose-voxpop:8001"
+
+
+@app.get("/projects/{project_slug}/voices")
+async def list_voices(
+    project_slug: str,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    """Return the set of voice names registered on voxpop for this project."""
+    import httpx as _httpx
+    _require_session(session)
+    async with _httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{VOXPOP_URL}/voices")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"voxpop: {resp.text[:200]}")
+    return resp.json()
+
+
+@app.post("/projects/{project_slug}/characters/{character_slug}/register-voice", status_code=200)
+async def register_voice(
+    project_slug: str,
+    character_slug: str,
+    request: Request,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    """Upload a WAV reference clip and register it with voxpop under the character slug."""
+    import httpx as _httpx
+    api_key_id, _ = _require_session(session)
+    _project_for_session(project_slug, api_key_id)
+
+    audio_bytes = await request.body()
+    if not audio_bytes:
+        raise HTTPException(status_code=422, detail="audio body required")
+
+    async with _httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{VOXPOP_URL}/voices/{character_slug}",
+            content=audio_bytes,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"voxpop: {resp.text[:200]}")
+    return resp.json()
+
+
+@app.delete("/projects/{project_slug}/characters/{character_slug}/register-voice", status_code=200)
+async def delete_voice(
+    project_slug: str,
+    character_slug: str,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    import httpx as _httpx
+    api_key_id, _ = _require_session(session)
+    _project_for_session(project_slug, api_key_id)
+    async with _httpx.AsyncClient(timeout=10) as client:
+        resp = await client.delete(f"{VOXPOP_URL}/voices/{character_slug}")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"voxpop: {resp.text[:200]}")
+    return resp.json()
+
+
 class GenerateVoiceBody(BaseModel):
-    line_id: str          # greeting or option id
-    line_index: int       # index within lines[]
+    line_id: str
+    line_index: int
     text: str
-    speaker_slug: str     # character entity slug for voice_description lookup
+    speaker_slug: str     # character slug - must have a registered voice on voxpop
 
 
 @app.post("/projects/{project_slug}/entities/{entity_slug}/generate-voice", status_code=201)
 async def generate_voice(
     project_slug: str,
-    entity_slug: str,         # conversation entity
+    entity_slug: str,
     body: GenerateVoiceBody,
     session: str | None = Cookie(default=None, alias=COOKIE_NAME),
 ):
-    """Generate TTS audio for a conversation line via voxpop, save as asset, link to conversation."""
+    """Generate TTS audio for a conversation line via voxpop (8001), save as asset."""
     import httpx as _httpx, hashlib as _hashlib
 
     api_key_id, _ = _require_session(session)
     project = _project_for_session(project_slug, api_key_id)
 
-    # Resolve voice_description from speaker character
-    voice_description: str | None = None
-    try:
-        char_post = _read_entity_file(project_slug, body.speaker_slug)
-        voice_description = char_post.metadata.get("voice_description", "").strip() or None
-    except Exception:
-        pass
-
-    # Build voxpop request
-    vox_payload: dict = {"text": body.text, "format": "wav"}
-    if voice_description:
-        vox_payload["description"] = voice_description
+    vox_payload: dict = {"voice": body.speaker_slug, "text": body.text, "format": "wav"}
 
     async with _httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post("http://purpose-voxpop:8000/synthesise", json=vox_payload)
+        resp = await client.post(f"{VOXPOP_URL}/synthesise", json=vox_payload)
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"voxpop: {resp.text[:200]}")
 

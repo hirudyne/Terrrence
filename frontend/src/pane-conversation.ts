@@ -142,6 +142,7 @@ export class ConversationEditor {
   private entitySlug: string = ''
   private _saveTimer: ReturnType<typeof setTimeout> | null = null
   private _entityCache: { slug: string; type: string; display_name: string }[] = []
+  private _registeredVoices: Set<string> = new Set()
 
   constructor(container: HTMLElement) {
     this.el = container
@@ -155,11 +156,13 @@ export class ConversationEditor {
     const state = getState()
     if (!state.projectSlug) return
 
-    const [detail, cache] = await Promise.all([
+    const [detail, cache, voiceList] = await Promise.all([
       api.getEntity(state.projectSlug, entitySlug),
       api.listEntities(state.projectSlug),
+      api.listVoices(state.projectSlug).catch(() => ({ voices: [] as string[] })),
     ])
     this._entityCache = cache
+    this._registeredVoices = new Set(voiceList.voices)
     this.data = parseConvBody(detail.body)
     this._render()
   }
@@ -526,6 +529,8 @@ export class ConversationEditor {
       const spk = speakerInput.value.trim()
       const txt = textInput.value.trim()
       const spkValid = speakerValid(spk, this._entityCache)
+      const charEntry = this._entityCache.find(e => e.type === 'character' && spk === `##${e.display_name}##`)
+      const hasVoice = charEntry ? this._registeredVoices.has(charEntry.slug) : false
       if (!txt && !spk) {
         ttsBtn.disabled = true
         ttsBtn.title = 'Speaker and text required'
@@ -535,6 +540,9 @@ export class ConversationEditor {
       } else if (!spk || !spkValid) {
         ttsBtn.disabled = true
         ttsBtn.title = 'Valid speaker (##Character##) required'
+      } else if (!hasVoice) {
+        ttsBtn.disabled = true
+        ttsBtn.title = 'No voice registered for this character - record one in the character preview pane'
       } else {
         ttsBtn.disabled = false
         ttsBtn.title = line.audio !== null ? 'Re-generate voice' : 'Generate voice'

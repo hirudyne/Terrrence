@@ -505,3 +505,13 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
   padding: 4px 8px; font-size: 0.78rem; cursor: pointer; color: var(--text);
 }
 .conv-autocomplete li:hover { background: var(--bg3); color: var(--accent); }
+
+/* ---- Voice Recorder ---- */
+.voice-recorder { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.voice-recorder-status {
+  font-size: 0.72rem; color: var(--text-dim); padding: 2px 0;
+}
+.voice-recorder-status[data-state="ok"] { color: #6dbf7f; }
+.voice-recorder-status[data-state="recording"] { color: var(--accent2); }
+.voice-recorder-btns { display: flex; gap: 5px; flex-wrap: wrap; }
+.voice-recorder-preview { width: 100%; height: 28px; margin-top: 2px; }

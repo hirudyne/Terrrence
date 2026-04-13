@@ -81,6 +81,16 @@ export const api = {
     req<{ prompt: string }>('GET', `/projects/${project}/entities/${entity}/image-prompt`),
   generateVoice: (project: string, entity: string, data: { line_id: string; line_index: number; text: string; speaker_slug: string }) =>
     req<{ asset_id: number; filename: string }>('POST', `/projects/${project}/entities/${entity}/generate-voice`, data),
+  listVoices: (project: string) =>
+    req<{ voices: string[] }>('GET', `/projects/${project}/voices`),
+  registerVoice: (project: string, characterSlug: string, audioBytes: ArrayBuffer) =>
+    fetch(`/projects/${project}/characters/${characterSlug}/register-voice`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: audioBytes,
+    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail ?? r.statusText) }); return r.json() }),
+  deleteVoice: (project: string, characterSlug: string) =>
+    req<unknown>('DELETE', `/projects/${project}/characters/${characterSlug}/register-voice`),
   updateEntityMeta: (project: string, entity: string, meta: Record<string, unknown>) =>
     req<unknown>('PATCH', `/projects/${project}/entities/${entity}`, { meta }),
 
