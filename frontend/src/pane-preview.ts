@@ -18,6 +18,44 @@ function escapeHtml(s: string): string {
 function isImage(mime: string) { return mime.startsWith('image/') }
 function isAudio(mime: string) { return mime.startsWith('audio/') }
 
+// Decode audio blob via Web Audio API and re-encode as 16-bit PCM WAV
+async function _blobToWav(blob: Blob): Promise<ArrayBuffer> {
+  const srcBuf = await blob.arrayBuffer()
+  const audioCtx = new OfflineAudioContext(1, 1, 44100)
+  const decoded = await audioCtx.decodeAudioData(srcBuf)
+  const sampleRate = decoded.sampleRate
+  const numSamples = decoded.length
+
+  // Render mono mix
+  const offline = new OfflineAudioContext(1, numSamples, sampleRate)
+  const src = offline.createBufferSource()
+  src.buffer = decoded
+  src.connect(offline.destination)
+  src.start(0)
+  const rendered = await offline.startRendering()
+  const pcm = rendered.getChannelData(0)
+
+  // Encode as 16-bit PCM WAV
+  const byteCount = numSamples * 2
+  const buf = new ArrayBuffer(44 + byteCount)
+  const view = new DataView(buf)
+  const wr = (off: number, val: number, size: number) => {
+    if (size === 4) view.setUint32(off, val, true)
+    else if (size === 2) view.setUint16(off, val, true)
+    else view.setUint8(off, val)
+  }
+  const wrStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)) }
+  wrStr(0, 'RIFF'); wr(4, 36 + byteCount, 4); wrStr(8, 'WAVE')
+  wrStr(12, 'fmt '); wr(16, 16, 4); wr(20, 1, 2); wr(22, 1, 2)
+  wr(24, sampleRate, 4); wr(28, sampleRate * 2, 4); wr(32, 2, 2); wr(34, 16, 2)
+  wrStr(36, 'data'); wr(40, byteCount, 4)
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]))
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true)
+  }
+  return buf
+}
+
 export class PreviewPane {
   private el: HTMLElement
   private currentSlug: string | null = null
@@ -499,10 +537,11 @@ export class PreviewPane {
     uploadBtn.onclick = async () => {
       if (!recordedBlob) return
       uploadBtn.disabled = true
-      uploadBtn.textContent = 'Registering...'
+      uploadBtn.textContent = 'Converting...'
       try {
-        const buf = await recordedBlob.arrayBuffer()
-        await api.registerVoice(projectSlug, characterSlug, buf)
+        const wavBuf = await _blobToWav(recordedBlob)
+        uploadBtn.textContent = 'Registering...'
+        await api.registerVoice(projectSlug, characterSlug, wavBuf)
         status.textContent = 'Voice registered'
         status.dataset.state = 'ok'
         uploadBtn.style.display = 'none'
