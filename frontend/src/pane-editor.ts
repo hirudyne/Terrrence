@@ -159,6 +159,7 @@ export class EditorPane {
   }
 
   private _mountConversationEditor(slug: string): void {
+    console.debug('[terrrence] _mountConversationEditor', slug)
     this.editorArea.innerHTML = ''
     let conv = this.convEditors.get(slug)
     if (!conv) {
@@ -167,9 +168,13 @@ export class EditorPane {
       this.editorArea.appendChild(wrapper)
       conv = new ConversationEditor(wrapper)
       this.convEditors.set(slug, conv)
+      console.debug('[terrrence] conv created, wrapper in DOM:', document.body.contains(wrapper))
     } else {
       this.editorArea.appendChild(conv.getEl())
+      console.debug('[terrrence] conv reused, el in DOM:', document.body.contains(conv.getEl()))
     }
-    conv.load(slug)
+    conv.load(slug).then(() => {
+      console.debug('[terrrence] conv.load resolved, el in DOM:', document.body.contains(conv!.getEl()), 'el children:', conv!.getEl().children.length)
+    })
   }
 }

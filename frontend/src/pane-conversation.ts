@@ -156,6 +156,7 @@ export class ConversationEditor {
   // -------------------------------------------------------------------------
 
   private _render(): void {
+    console.debug('[terrrence] conv _render, el in DOM:', document.body.contains(this.el), 'greetings:', this.data.greetings.length, 'menu:', this.data.menu.length)
     this.el.innerHTML = ''
 
     const cols = document.createElement('div')
