@@ -45,8 +45,8 @@ function markForToken(raw: string): Decoration {
 
 // Callback set per-editor instance so the highlighter can trigger entity logic
 let _onTokenComplete: ((match: string, type: string) => void) | null = null
-let _tokenDebounceTimer: ReturnType<typeof setTimeout> | null = null
-const TOKEN_STUB_DELAY = 5000
+// Pending token waiting for Tab/Enter confirmation
+let _pendingToken: { inner: string; type: string } | null = null
 
 const tokenHighlighter = ViewPlugin.fromClass(
   class {
@@ -56,7 +56,7 @@ const tokenHighlighter = ViewPlugin.fromClass(
       if (update.docChanged || update.viewportChanged) {
         this.decorations = this._build(update.view)
       }
-      if (update.docChanged && _onTokenComplete) {
+      if (_onTokenComplete) {
         const cursor = update.state.selection.main.head
         const text = update.state.doc.toString()
         // Find the most recently completed token: its end must be <= cursor and within 2 chars
@@ -79,14 +79,9 @@ const tokenHighlighter = ViewPlugin.fromClass(
             : 'event'
           const delimLen = 2
           const inner = raw.slice(delimLen, -delimLen).trim()
-          console.debug('[terrrence] tokenHighlighter: token near cursor', { raw, type, inner, cursor, tokenEnd: best.tokenEnd })
-          if (_tokenDebounceTimer) clearTimeout(_tokenDebounceTimer)
-          const _capturedInner = inner
-          const _capturedType = type
-          _tokenDebounceTimer = setTimeout(() => {
-            _tokenDebounceTimer = null
-            if (_onTokenComplete) _onTokenComplete(_capturedInner, _capturedType)
-          }, TOKEN_STUB_DELAY)
+          _pendingToken = { inner, type }
+        } else {
+          _pendingToken = null
         }
       }
     }
@@ -276,7 +271,32 @@ export function getOrCreateEditor(
   const extensions = [
     lineNumbers(),
     history(),
-    keymap.of([...defaultKeymap, ...historyKeymap]),
+    keymap.of([
+      {
+        key: 'Tab',
+        run: () => {
+          if (_pendingToken && _onTokenComplete) {
+            _onTokenComplete(_pendingToken.inner, _pendingToken.type)
+            _pendingToken = null
+            return true
+          }
+          return false
+        }
+      },
+      {
+        key: 'Enter',
+        run: () => {
+          if (_pendingToken && _onTokenComplete) {
+            _onTokenComplete(_pendingToken.inner, _pendingToken.type)
+            _pendingToken = null
+            return true
+          }
+          return false
+        }
+      },
+      ...defaultKeymap,
+      ...historyKeymap,
+    ]),
     markdown(),
     highlightActiveLine(),
     EditorView.lineWrapping,
