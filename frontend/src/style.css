@@ -391,3 +391,99 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
   outline: 2px solid #7ec8e3;
   outline-offset: 2px;
 }
+
+/* ---- Conversation Editor ---- */
+.conv-editor {
+  display: flex; flex-direction: column; height: 100%;
+  overflow: hidden; background: var(--bg);
+}
+.conv-cols {
+  display: flex; flex-direction: row; gap: 12px;
+  flex: 1; overflow: hidden; padding: 10px;
+}
+.conv-col {
+  flex: 1; display: flex; flex-direction: column; gap: 6px;
+  overflow-y: auto; min-width: 0;
+}
+.conv-col-title {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--accent); padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.conv-section { display: flex; flex-direction: column; gap: 6px; }
+.conv-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px; display: flex;
+  flex-direction: column; gap: 5px;
+}
+.conv-card-hdr {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.conv-id-badge {
+  font-size: 0.65rem; color: var(--text-dim); font-family: monospace;
+  background: var(--bg3); padding: 1px 5px; border-radius: 2px;
+}
+.conv-card-actions { display: flex; gap: 3px; }
+.conv-icon-btn {
+  background: none; border: 1px solid var(--border); color: var(--text-dim);
+  cursor: pointer; border-radius: var(--radius); padding: 0 5px;
+  font-size: 0.75rem; line-height: 1.4;
+}
+.conv-icon-btn:hover { color: var(--text); border-color: var(--text-dim); }
+.conv-icon-btn--danger:hover { color: var(--danger); border-color: var(--danger); }
+.conv-field-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.conv-field-label {
+  font-size: 0.68rem; color: var(--text-dim); min-width: 48px; flex-shrink: 0;
+}
+.conv-input {
+  background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius); padding: 3px 6px; font-size: 0.8rem;
+  font-family: inherit; width: 100%;
+}
+.conv-input:focus { outline: none; border-color: var(--accent); }
+.conv-speaker-input { width: 140px; flex-shrink: 0; font-size: 0.75rem; }
+.conv-line-text { flex: 1; resize: vertical; min-height: 2.4em; }
+.conv-lines { display: flex; flex-direction: column; gap: 4px; padding-top: 2px; }
+.conv-line-row {
+  display: flex; align-items: flex-start; gap: 5px;
+  background: var(--bg3); border-radius: var(--radius); padding: 5px;
+}
+.conv-speaker-wrap { position: relative; flex-shrink: 0; }
+.conv-field-err {
+  color: var(--danger); font-size: 0.75rem; margin-left: 2px;
+  cursor: default;
+}
+.conv-audio-slot {
+  flex-shrink: 0; width: 22px; text-align: center; color: var(--text-dim);
+  font-size: 0.8rem; opacity: 0.4; cursor: default; padding-top: 4px;
+  title: attr(title);
+}
+.conv-line-acts { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+.conv-add-btn {
+  background: none; border: 1px dashed var(--border); color: var(--text-dim);
+  cursor: pointer; border-radius: var(--radius); padding: 4px 8px;
+  font-size: 0.75rem; width: 100%; text-align: left;
+}
+.conv-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+.conv-add-btn--sub { margin-left: 8px; width: calc(100% - 8px); }
+.conv-add-btn--line { border-style: dotted; }
+.conv-sub-toggle {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font-size: 0.72rem; text-align: left; padding: 2px 0;
+}
+.conv-sub-toggle:hover { color: var(--accent); }
+.conv-sub-wrap { padding-left: 10px; border-left: 2px solid var(--border); margin-left: 4px; }
+.conv-submenu { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+.conv-autocomplete {
+  position: absolute; top: 100%; left: 0; z-index: 200;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); list-style: none; min-width: 160px;
+  max-height: 180px; overflow-y: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.conv-autocomplete li {
+  padding: 4px 8px; font-size: 0.78rem; cursor: pointer; color: var(--text);
+}
+.conv-autocomplete li:hover { background: var(--bg3); color: var(--accent); }

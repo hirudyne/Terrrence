@@ -3,13 +3,16 @@ import { api } from './api'
 
 import { getState, setState, subscribe } from './state'
 import { getOrCreateEditor, destroyEditor, refreshEntityCache, editorIsCached } from './editor'
+import { ConversationEditor } from './pane-conversation'
 
 export class EditorPane {
   private el: HTMLElement
   private openTabs: string[] = []     // entity slugs in tab order
   private tabNames: Map<string, string> = new Map()  // slug -> display_name
+  private tabTypes: Map<string, string> = new Map()  // slug -> entity type
   private activeTab: string | null = null
   private editorArea: HTMLElement
+  private convEditors: Map<string, ConversationEditor> = new Map()
 
   constructor(container: HTMLElement) {
     this.el = container
@@ -89,6 +92,8 @@ export class EditorPane {
 
   private _closeTab(slug: string) {
     destroyEditor(slug)
+    this.convEditors.delete(slug)
+    this.tabTypes.delete(slug)
     this.openTabs = this.openTabs.filter(s => s !== slug)
     if (this.activeTab === slug) {
       this.activeTab = this.openTabs[this.openTabs.length - 1] ?? null
@@ -110,6 +115,13 @@ export class EditorPane {
 
     const seq = ++this._mountSeq
 
+    // Conversation entities get the dedicated conversation editor
+    const knownType = this.tabTypes.get(slug)
+    if (knownType === 'conversation') {
+      this._mountConversationEditor(slug)
+      return
+    }
+
     // If this editor instance is already cached, show it immediately
     // without a server round-trip
     const cached = editorIsCached(slug)
@@ -130,12 +142,31 @@ export class EditorPane {
     if (seq !== this._mountSeq) return
 
     this.tabNames.set(slug, detail.display_name || slug)
+    this.tabTypes.set(slug, detail.type ?? 'unknown')
     this._renderTabBar()
+
+    if (detail.type === 'conversation') {
+      if (seq !== this._mountSeq) return
+      this._mountConversationEditor(slug)
+      return
+    }
 
     const wrap = document.createElement('div')
     wrap.style.height = '100%'
     this.editorArea.appendChild(wrap)
 
     getOrCreateEditor(slug, detail.type ?? 'unknown', wrap, detail.body, (_content) => { /* handled in editor.ts */ })
+  }
+
+  private _mountConversationEditor(slug: string): void {
+    this.editorArea.innerHTML = ''
+    let conv = this.convEditors.get(slug)
+    if (!conv) {
+      conv = new ConversationEditor(this.editorArea)
+      this.convEditors.set(slug, conv)
+    } else {
+      this.editorArea.appendChild(conv['el'])
+    }
+    conv.load(slug)
   }
 }
