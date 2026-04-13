@@ -56,8 +56,9 @@ export function initLayout(appEl: HTMLElement): void {
 
   // Recalculate pane sizes whenever the app container changes size
   // (covers window resize, devtools open/close, panel drags)
-  const ro = new ResizeObserver(() => {
-    layout.updateSize(appEl.offsetWidth, appEl.offsetHeight)
+  const ro = new ResizeObserver((entries) => {
+    const e = entries[0].contentRect
+    layout.updateSize(e.width, e.height)
   })
   ro.observe(appEl)
 }

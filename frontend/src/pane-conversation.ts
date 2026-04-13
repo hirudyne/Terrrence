@@ -9,6 +9,34 @@ import {
 } from './conversation-types'
 
 // ---------------------------------------------------------------------------
+// TTS timing tracker - stores (chars, seconds) samples, estimates from average rate
+// ---------------------------------------------------------------------------
+
+const _TtsTimer = new class {
+  private _samples: Array<{ chars: number; secs: number }> = []
+  private _storageKey = 'terrrence_tts_timing'
+
+  constructor() {
+    try {
+      const saved = sessionStorage.getItem(this._storageKey)
+      if (saved) this._samples = JSON.parse(saved)
+    } catch (_) {}
+  }
+
+  record(chars: number, secs: number): void {
+    this._samples.push({ chars, secs })
+    if (this._samples.length > 50) this._samples.shift()
+    try { sessionStorage.setItem(this._storageKey, JSON.stringify(this._samples)) } catch (_) {}
+  }
+
+  estimate(chars: number): number {
+    if (this._samples.length === 0) return chars * 0.12  // cold fallback ~12ms/char
+    const rate = this._samples.reduce((s, x) => s + x.secs / Math.max(1, x.chars), 0) / this._samples.length
+    return Math.max(2, chars * rate)
+  }
+}()
+
+// ---------------------------------------------------------------------------
 // Speaker validation
 // ---------------------------------------------------------------------------
 
@@ -158,28 +186,22 @@ export class ConversationEditor {
   private _render(): void {
     this.el.innerHTML = ''
 
-    const cols = document.createElement('div')
-    cols.className = 'conv-cols'
+    const scroll = document.createElement('div')
+    scroll.className = 'conv-scroll'
 
-    const leftCol = document.createElement('div')
-    leftCol.className = 'conv-col'
-    const leftTitle = document.createElement('div')
-    leftTitle.className = 'conv-col-title'
-    leftTitle.textContent = 'Greetings'
-    leftCol.appendChild(leftTitle)
-    leftCol.appendChild(this._renderGreetings())
-    cols.appendChild(leftCol)
+    const greetTitle = document.createElement('div')
+    greetTitle.className = 'conv-col-title'
+    greetTitle.textContent = 'Greetings'
+    scroll.appendChild(greetTitle)
+    scroll.appendChild(this._renderGreetings())
 
-    const rightCol = document.createElement('div')
-    rightCol.className = 'conv-col'
-    const rightTitle = document.createElement('div')
-    rightTitle.className = 'conv-col-title'
-    rightTitle.textContent = 'Menu'
-    rightCol.appendChild(rightTitle)
-    rightCol.appendChild(this._renderMenu(this.data.menu, null))
-    cols.appendChild(rightCol)
+    const menuTitle = document.createElement('div')
+    menuTitle.className = 'conv-col-title conv-col-title--menu'
+    menuTitle.textContent = 'Menu'
+    scroll.appendChild(menuTitle)
+    scroll.appendChild(this._renderMenu(this.data.menu, null))
 
-    this.el.appendChild(cols)
+    this.el.appendChild(scroll)
   }
 
   // -------------------------------------------------------------------------
@@ -456,13 +478,49 @@ export class ConversationEditor {
     }
     row.appendChild(textInput)
 
-    // Audio slot - shows status, houses TTS button
+    // Audio slot - play button (if audio exists) + generate button + progress
     const audioSlot = document.createElement('div')
     audioSlot.className = 'conv-audio-slot'
 
+    // Play button (only shown when audio asset exists)
+    let audioEl: HTMLAudioElement | null = null
+    const playBtn = document.createElement('button')
+    playBtn.className = 'conv-tts-btn conv-play-btn'
+    playBtn.textContent = '▶'
+    playBtn.title = 'Play voice clip'
+    playBtn.style.display = line.audio !== null ? 'inline-block' : 'none'
+    playBtn.onclick = () => {
+      const state = getState()
+      if (!state.projectSlug || line.audio === null) return
+      if (audioEl) { audioEl.pause(); audioEl = null; playBtn.textContent = '▶'; return }
+      audioEl = new Audio(api.assetFileUrl(state.projectSlug, line.audio))
+      audioEl.play()
+      playBtn.textContent = '■'
+      audioEl.onended = () => { playBtn.textContent = '▶'; audioEl = null }
+      audioEl.onerror = () => { playBtn.textContent = '▶'; audioEl = null }
+    }
+    audioSlot.appendChild(playBtn)
+
+    // Progress bar (shown during generation)
+    const progressWrap = document.createElement('div')
+    progressWrap.className = 'conv-progress-wrap'
+    progressWrap.style.display = 'none'
+    const progressTrack = document.createElement('div')
+    progressTrack.className = 'conv-progress-bar-track'
+    const progressBar = document.createElement('div')
+    progressBar.className = 'conv-progress-bar'
+    const progressLabel = document.createElement('div')
+    progressLabel.className = 'conv-progress-label'
+    progressTrack.appendChild(progressBar)
+    progressWrap.appendChild(progressTrack)
+    progressWrap.appendChild(progressLabel)
+    audioSlot.appendChild(progressWrap)
+
+    // Generate button
     const ttsBtn = document.createElement('button')
     ttsBtn.className = 'conv-tts-btn'
-    ttsBtn.textContent = line.audio !== null ? '♪' : '⊕'
+    ttsBtn.textContent = line.audio !== null ? '⟳' : '⊕'
+    ttsBtn.title = line.audio !== null ? 'Re-generate voice' : 'Generate voice'
 
     const _updateTtsBtn = () => {
       const spk = speakerInput.value.trim()
@@ -484,18 +542,44 @@ export class ConversationEditor {
     }
     _updateTtsBtn()
 
+    let _progressTimer: ReturnType<typeof setInterval> | null = null
+
+    const _startProgress = (txt: string) => {
+      const estimate = _TtsTimer.estimate(txt.length)
+      const start = Date.now()
+      progressWrap.style.display = 'flex'
+      ttsBtn.style.display = 'none'
+      playBtn.style.display = 'none'
+      const tick = () => {
+        const elapsed = (Date.now() - start) / 1000
+        const pct = estimate > 0 ? Math.min(95, (elapsed / estimate) * 100) : 50
+        progressBar.style.width = `${pct}%`
+        const rem = Math.max(0, Math.ceil(estimate - elapsed))
+        progressLabel.textContent = rem > 0 ? `~${rem}s` : '...'
+      }
+      tick()
+      _progressTimer = setInterval(tick, 250)
+    }
+
+    const _stopProgress = () => {
+      if (_progressTimer) { clearInterval(_progressTimer); _progressTimer = null }
+      progressWrap.style.display = 'none'
+      progressBar.style.width = '0%'
+      ttsBtn.style.display = 'inline-block'
+    }
+
     ttsBtn.onclick = async () => {
       const state = getState()
       if (!state.projectSlug || !containerId) return
       const spk = speakerInput.value.trim()
       const txt = textInput.value.trim()
-      // Resolve speaker slug
       const charEntry = this._entityCache.find(e =>
         e.type === 'character' && spk === `##${e.display_name}##`
       )
       if (!charEntry || !txt) return
       ttsBtn.disabled = true
-      ttsBtn.textContent = '...'
+      _startProgress(txt)
+      const t0 = Date.now()
       try {
         const result = await api.generateVoice(state.projectSlug, this.entitySlug, {
           line_id: containerId,
@@ -503,14 +587,19 @@ export class ConversationEditor {
           text: txt,
           speaker_slug: charEntry.slug,
         })
+        _TtsTimer.record(txt.length, (Date.now() - t0) / 1000)
         line.audio = result.asset_id
-        ttsBtn.textContent = '♪'
+        _stopProgress()
+        ttsBtn.textContent = '⟳'
         ttsBtn.title = 'Re-generate voice'
         ttsBtn.disabled = false
+        playBtn.style.display = 'inline-block'
       } catch (e: any) {
-        ttsBtn.textContent = line.audio !== null ? '♪' : '⊕'
+        _stopProgress()
+        ttsBtn.textContent = line.audio !== null ? '⟳' : '⊕'
         ttsBtn.title = `TTS failed: ${e?.message ?? e}`
         ttsBtn.disabled = false
+        playBtn.style.display = line.audio !== null ? 'inline-block' : 'none'
         console.error('[terrrence] TTS error', e)
       }
     }
