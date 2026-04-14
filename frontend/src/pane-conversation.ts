@@ -2,7 +2,6 @@
 // Two-column layout: greetings (left), menu tree (right).
 
 import { api } from './api'
-import { blobToWav, startRecording } from './audio-utils'
 import { getState } from './state'
 import {
   ConvData, ConvGreeting, ConvLine, ConvOption,
@@ -615,59 +614,6 @@ export class ConversationEditor {
 
     audioSlot.appendChild(ttsBtn)
 
-    // Record button
-    const recBtn = document.createElement('button')
-    recBtn.className = 'conv-tts-btn conv-rec-btn'
-    recBtn.textContent = '🎙'
-    recBtn.title = 'Record line'
-
-    const recStopBtn = document.createElement('button')
-    recStopBtn.className = 'conv-tts-btn conv-rec-stop-btn'
-    recStopBtn.textContent = '⏹'
-    recStopBtn.title = 'Stop recording'
-    recStopBtn.style.display = 'none'
-
-    let _stopLineRec: (() => Promise<Blob>) | null = null
-
-    recBtn.onclick = async () => {
-      try {
-        const rec = await startRecording()
-        _stopLineRec = rec.stop
-        recBtn.style.display = 'none'
-        recStopBtn.style.display = 'inline-block'
-        recBtn.title = 'Recording...'
-      } catch (e: any) {
-        recBtn.title = `Mic error: ${e?.message ?? e}`
-      }
-    }
-
-    recStopBtn.onclick = async () => {
-      if (!_stopLineRec) return
-      recStopBtn.style.display = 'none'
-      recBtn.style.display = 'inline-block'
-      recBtn.disabled = true
-      recBtn.textContent = '⏳'
-      const blob = await _stopLineRec()
-      _stopLineRec = null
-      const state = getState()
-      if (!state.projectSlug || !containerId) { recBtn.disabled = false; recBtn.textContent = '🎙'; return }
-      try {
-        const wavBuf = await blobToWav(blob)
-        const result = await api.enhanceLine(state.projectSlug, this.entitySlug, containerId, idx, wavBuf)
-        line.audio = result.asset_id
-        recBtn.textContent = '🎙'
-        recBtn.title = 'Re-record line'
-        recBtn.disabled = false
-        playBtn.style.display = 'inline-block'
-      } catch (e: any) {
-        recBtn.textContent = '🎙'
-        recBtn.title = `Enhance failed: ${e?.message ?? e}`
-        recBtn.disabled = false
-      }
-    }
-
-    audioSlot.appendChild(recBtn)
-    audioSlot.appendChild(recStopBtn)
     row.appendChild(audioSlot)
 
     // Line actions

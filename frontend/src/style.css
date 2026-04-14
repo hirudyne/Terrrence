@@ -465,10 +465,6 @@ html, body, #app { height: 100%; width: 100%; overflow: hidden; }
 .conv-tts-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .conv-play-btn { border-color: #6dbf7f; color: #6dbf7f; }
 .conv-play-btn:not(:disabled):hover { border-color: #8de8a0; color: #8de8a0; }
-.conv-rec-btn { border-color: #e07070; color: #e07070; }
-.conv-rec-btn:not(:disabled):hover { border-color: #f4a0a0; color: #f4a0a0; }
-.conv-rec-stop-btn { border-color: #e07070; color: #e07070; animation: conv-rec-pulse 1s infinite; }
-@keyframes conv-rec-pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
 .conv-progress-wrap {
   display: none; flex-direction: column; gap: 2px;
   min-width: 48px; max-width: 72px;
