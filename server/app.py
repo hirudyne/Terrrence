@@ -1523,6 +1523,94 @@ class GenerateVoiceBody(BaseModel):
     speaker_slug: str     # character slug - must have a registered voice on voxpop
 
 
+
+@app.post("/projects/{project_slug}/entities/{entity_slug}/record-line", status_code=201)
+async def record_line(
+    project_slug: str,
+    entity_slug: str,
+    line_id: str,
+    line_index: int,
+    request: Request,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    """Save a recorded WAV directly as a line audio asset (no enhancement)."""
+    import hashlib as _hashlib, json as _json
+
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+
+    wav_bytes = await request.body()
+    if not wav_bytes:
+        raise HTTPException(status_code=422, detail="audio body required")
+
+    sha256 = _hashlib.sha256(wav_bytes).hexdigest()
+    assets_dir = PROJECTS_ROOT / project_slug / "assets"
+    assets_dir.mkdir(exist_ok=True)
+    filename = f"recorded_{entity_slug}_{line_id}_{line_index}_{sha256[:8]}.wav"
+    (assets_dir / filename).write_bytes(wav_bytes)
+    rel_path = f"assets/{filename}"
+
+    with db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM assets WHERE project_id = ? AND sha256 = ?",
+            (project["id"], sha256),
+        ).fetchone()
+        if existing:
+            asset_id = existing["id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256) VALUES (?,?,?,?,?)",
+                (project["id"], rel_path, "audio/wav", len(wav_bytes), sha256),
+            )
+            asset_id = cur.lastrowid
+        conv_entity = conn.execute(
+            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            (project["id"], entity_slug),
+        ).fetchone()
+        if conv_entity:
+            conn.execute(
+                "INSERT OR IGNORE INTO asset_entities (asset_id, entity_id, role) VALUES (?,?,?)",
+                (asset_id, conv_entity["id"], "recorded"),
+            )
+
+    conv_post = _read_entity_file(project_slug, entity_slug)
+    try:
+        conv_data = _json.loads(conv_post.content) if conv_post.content.strip() else {}
+    except Exception:
+        conv_data = {}
+
+    def _patch(items: list, tid: str, idx: int) -> bool:
+        for item in items:
+            if not isinstance(item, dict): continue
+            if item.get("id") == tid:
+                ll = item.get("lines", [])
+                if 0 <= idx < len(ll):
+                    ll[idx]["audio"] = asset_id
+                    return True
+            if _patch(item.get("response_menu", []), tid, idx): return True
+        return False
+
+    patched = False
+    for g in conv_data.get("greetings", []):
+        if isinstance(g, dict) and g.get("id") == line_id:
+            ll = g.get("lines", [])
+            if 0 <= line_index < len(ll):
+                ll[line_index]["audio"] = asset_id
+                patched = True
+                break
+    if not patched:
+        _patch(conv_data.get("menu", []), line_id, line_index)
+
+    _write_entity_file(
+        project_slug, entity_slug,
+        conv_post.metadata.get("display_name", entity_slug),
+        "conversation", _json.dumps(conv_data, indent=2),
+        extra_meta={k: v for k, v in conv_post.metadata.items()
+                    if k not in ("slug", "type", "display_name")},
+    )
+    return {"asset_id": asset_id, "filename": filename}
+
+
 @app.post("/projects/{project_slug}/entities/{entity_slug}/generate-voice", status_code=201)
 async def generate_voice(
     project_slug: str,
