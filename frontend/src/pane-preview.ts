@@ -1,4 +1,5 @@
 import { api, EntityDetail, Asset } from './api'
+import { blobToWav, startRecording } from './audio-utils'
 import { getState, setState, subscribe } from './state'
 
 const TYPE_PREFIX: Record<string, string> = {
@@ -17,44 +18,6 @@ function escapeHtml(s: string): string {
 
 function isImage(mime: string) { return mime.startsWith('image/') }
 function isAudio(mime: string) { return mime.startsWith('audio/') }
-
-// Decode audio blob via Web Audio API and re-encode as 16-bit PCM WAV
-async function _blobToWav(blob: Blob): Promise<ArrayBuffer> {
-  const srcBuf = await blob.arrayBuffer()
-  const audioCtx = new OfflineAudioContext(1, 1, 44100)
-  const decoded = await audioCtx.decodeAudioData(srcBuf)
-  const sampleRate = decoded.sampleRate
-  const numSamples = decoded.length
-
-  // Render mono mix
-  const offline = new OfflineAudioContext(1, numSamples, sampleRate)
-  const src = offline.createBufferSource()
-  src.buffer = decoded
-  src.connect(offline.destination)
-  src.start(0)
-  const rendered = await offline.startRendering()
-  const pcm = rendered.getChannelData(0)
-
-  // Encode as 16-bit PCM WAV
-  const byteCount = numSamples * 2
-  const buf = new ArrayBuffer(44 + byteCount)
-  const view = new DataView(buf)
-  const wr = (off: number, val: number, size: number) => {
-    if (size === 4) view.setUint32(off, val, true)
-    else if (size === 2) view.setUint16(off, val, true)
-    else view.setUint8(off, val)
-  }
-  const wrStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)) }
-  wrStr(0, 'RIFF'); wr(4, 36 + byteCount, 4); wrStr(8, 'WAVE')
-  wrStr(12, 'fmt '); wr(16, 16, 4); wr(20, 1, 2); wr(22, 1, 2)
-  wr(24, sampleRate, 4); wr(28, sampleRate * 2, 4); wr(32, 2, 2); wr(34, 16, 2)
-  wrStr(36, 'data'); wr(40, byteCount, 4)
-  for (let i = 0; i < numSamples; i++) {
-    const s = Math.max(-1, Math.min(1, pcm[i]))
-    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true)
-  }
-  return buf
-}
 
 export class PreviewPane {
   private el: HTMLElement
@@ -448,9 +411,6 @@ export class PreviewPane {
     previewAudio.style.display = 'none'
     wrap.appendChild(previewAudio)
 
-    let mediaStream: MediaStream | null = null
-    let mediaRecorder: MediaRecorder | null = null
-    let chunks: Blob[] = []
     let recordedBlob: Blob | null = null
 
     const recordBtn = document.createElement('button')
@@ -491,34 +451,15 @@ export class PreviewPane {
       }
     }).catch(() => { status.textContent = 'Could not reach voice service' })
 
+    let _stopRecording: (() => Promise<Blob>) | null = null
+
     recordBtn.onclick = async () => {
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        chunks = []
         recordedBlob = null
         previewAudio.style.display = 'none'
         uploadBtn.style.display = 'none'
-
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-          ? 'audio/ogg;codecs=opus'
-          : ''
-
-        mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined)
-        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
-        mediaRecorder.onstop = () => {
-          recordedBlob = new Blob(chunks, { type: mediaRecorder!.mimeType || 'audio/wav' })
-          const url = URL.createObjectURL(recordedBlob)
-          previewAudio.src = url
-          previewAudio.style.display = 'block'
-          uploadBtn.style.display = 'inline-block'
-          status.textContent = 'Recording ready - preview and register'
-          status.dataset.state = 'ready'
-          mediaStream!.getTracks().forEach(t => t.stop())
-          mediaStream = null
-        }
-        mediaRecorder.start()
+        const rec = await startRecording()
+        _stopRecording = rec.stop
         recordBtn.style.display = 'none'
         stopBtn.style.display = 'inline-block'
         status.textContent = 'Recording...'
@@ -528,10 +469,18 @@ export class PreviewPane {
       }
     }
 
-    stopBtn.onclick = () => {
-      mediaRecorder?.stop()
+    stopBtn.onclick = async () => {
+      if (!_stopRecording) return
       stopBtn.style.display = 'none'
       recordBtn.style.display = 'inline-block'
+      recordedBlob = await _stopRecording()
+      _stopRecording = null
+      const url = URL.createObjectURL(recordedBlob)
+      previewAudio.src = url
+      previewAudio.style.display = 'block'
+      uploadBtn.style.display = 'inline-block'
+      status.textContent = 'Recording ready - preview and register'
+      status.dataset.state = 'ready'
     }
 
     uploadBtn.onclick = async () => {
@@ -539,7 +488,7 @@ export class PreviewPane {
       uploadBtn.disabled = true
       uploadBtn.textContent = 'Converting...'
       try {
-        const wavBuf = await _blobToWav(recordedBlob)
+        const wavBuf = await blobToWav(recordedBlob)
         uploadBtn.textContent = 'Registering...'
         await api.registerVoice(projectSlug, characterSlug, wavBuf)
         status.textContent = 'Voice registered'

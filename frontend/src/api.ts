@@ -91,6 +91,12 @@ export const api = {
     }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail ?? r.statusText) }); return r.json() }),
   deleteVoice: (project: string, characterSlug: string) =>
     req<unknown>('DELETE', `/projects/${project}/characters/${characterSlug}/register-voice`),
+  enhanceLine: (project: string, entity: string, lineId: string, lineIndex: number, wavBuffer: ArrayBuffer) =>
+    fetch(`/projects/${project}/entities/${entity}/enhance-line?line_id=${encodeURIComponent(lineId)}&line_index=${lineIndex}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: wavBuffer,
+    }).then(async r => { if (!r.ok) { const e = await r.json().catch(() => ({ detail: r.statusText })); throw new Error(e.detail ?? r.statusText) } return r.json() }),
   updateEntityMeta: (project: string, entity: string, meta: Record<string, unknown>) =>
     req<unknown>('PATCH', `/projects/${project}/entities/${entity}`, { meta }),
 
