@@ -58,14 +58,24 @@ export function initLayout(appEl: HTMLElement): void {
   layout.loadLayout(LAYOUT_CONFIG)
   layout.init()
 
-  // visualViewport: position:fixed containers do not resize on iOS keyboard/pinch,
-  // so GL's internal ResizeObserver never fires for those events.
-  // Force a sync via the public API when visual viewport changes.
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', () => {
-      const { width, height } = appEl.getBoundingClientRect()
-      console.debug('[gl resize] visualViewport', width, height)
-      ;(layout as any).updateRootSize(true)
-    })
+  // GL's internal ResizeObserver fires handleContainerResize() -> processResizeWithDebounce()
+  // -> updateSizeFromContainer() after 100ms debounce. That reads offsetWidth/offsetHeight
+  // from the container and calls setSize(). This should cover all window/devtools resizes.
+  //
+  // visualViewport fires on Windows too (devtools open/close can trigger it in Chrome).
+  // updateSizeFromContainer() is the correct call - it re-reads container dims.
+  // updateRootSize() only redistributes already-stored dims, wrong for container resize.
+  const _glSync = () => {
+    const ow = appEl.offsetWidth
+    const oh = appEl.offsetHeight
+    const { width: bw, height: bh } = appEl.getBoundingClientRect()
+    console.debug('[gl sync] offset:', ow, oh, '| bcr:', Math.round(bw), Math.round(bh))
+    ;(layout as any).updateSizeFromContainer()
   }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', _glSync)
+  }
+  // Belt-and-braces for devtools panel resize on PC which may not fire visualViewport.
+  window.addEventListener('resize', _glSync)
 }
