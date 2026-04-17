@@ -57,11 +57,19 @@ export function initLayout(appEl: HTMLElement): void {
   // Recalculate GL whenever the layout container changes size.
   // rAF ensures we read post-paint pixel dimensions.
   let _rafId: number | null = null
+  let _delayId: ReturnType<typeof setTimeout> | null = null
   const _syncSize = () => {
     if (_rafId !== null) cancelAnimationFrame(_rafId)
+    if (_delayId !== null) clearTimeout(_delayId)
     _rafId = requestAnimationFrame(() => {
       _rafId = null
-      layout.updateSize(appEl.offsetWidth, appEl.offsetHeight)
+      layout.updateSize(window.innerWidth, window.innerHeight)
+      // Second sync after 150ms catches monitor-change cases where the first
+      // event fires before the browser commits the new viewport dimensions.
+      _delayId = setTimeout(() => {
+        _delayId = null
+        layout.updateSize(window.innerWidth, window.innerHeight)
+      }, 150)
     })
   }
   const ro = new ResizeObserver(_syncSize)
