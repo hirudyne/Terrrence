@@ -53,6 +53,9 @@ export function initLayout(appEl: HTMLElement): void {
 
   layout.loadLayout(LAYOUT_CONFIG)
   layout.init()
+  // GL only auto-resizes with its own internal ResizeObserver when the container
+  // is document.body. Enable it for our custom container element.
+  ;(layout as any).resizeWithContainerAutomatically = true
 
   const _sync = () => {
     // updateSizeFromContainer() reads from the container element directly,
