@@ -79,4 +79,16 @@ export function initLayout(appEl: HTMLElement): void {
   new ResizeObserver(_onResize).observe(appEl)
   window.addEventListener('resize', _onResize)
   if (window.visualViewport) window.visualViewport.addEventListener('resize', _onResize)
+
+  // Moving a window between monitors does not fire a resize event.
+  // Poll innerWidth/innerHeight at 500ms intervals and sync if they change.
+  let _lastW = window.innerWidth
+  let _lastH = window.innerHeight
+  setInterval(() => {
+    if (window.innerWidth !== _lastW || window.innerHeight !== _lastH) {
+      _lastW = window.innerWidth
+      _lastH = window.innerHeight
+      _onResize()
+    }
+  }, 500)
 }
