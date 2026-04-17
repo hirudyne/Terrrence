@@ -55,10 +55,13 @@ export function initLayout(appEl: HTMLElement): void {
   layout.init()
 
   const _sync = () => {
-    const r = appEl.getBoundingClientRect()
-    if (r.width <= 0 || r.height <= 0) return
-    layout.updateSize(r.width, r.height)
-    requestAnimationFrame(() => layout.updateSize(r.width, r.height))
+    // updateSizeFromContainer() reads from the container element directly,
+    // bypassing GL's own stale row/column inline styles that cause the
+    // landscape->portrait resize to silently use old dimensions.
+    // It is marked @internal but is the only reliable path.
+    const gl = layout as unknown as Record<string, () => void>
+    gl['updateSizeFromContainer']()
+    requestAnimationFrame(() => gl['updateSizeFromContainer']())
   }
 
   requestAnimationFrame(_sync)
