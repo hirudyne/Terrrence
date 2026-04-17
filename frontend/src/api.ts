@@ -110,6 +110,8 @@ export const api = {
     req<void>('DELETE', `/projects/${project}/entities/${entity}/tags/${encodeURIComponent(tag_name)}`),
   updateEntity: (project: string, slug: string, data: { display_name?: string; body?: string }) =>
     req<Entity>('PATCH', `/projects/${project}/entities/${slug}`, data),
+  enhanceLine: (project: string, entity: string, lineId: string, lineIndex: number, assetId: number) =>
+    req<{ asset_id: number; filename: string }>('POST', `/projects/${project}/entities/${entity}/enhance-line?line_id=${encodeURIComponent(lineId)}&line_index=${lineIndex}&asset_id=${assetId}`),
   getBacklinks: (project: string, slug: string) =>
     req<{slug:string;type:string;display_name:string;occurrences:number}[]>('GET', `/projects/${project}/entities/${slug}/backlinks`),
   renameEntity: (project: string, slug: string, display_name: string) =>

@@ -603,6 +603,7 @@ export class ConversationEditor {
         ttsBtn.title = 'Re-generate voice'
         ttsBtn.disabled = false
         playBtn.style.display = 'inline-block'
+        enhBtn.style.display = 'inline-block'
       } catch (e: any) {
         _stopProgress()
         ttsBtn.textContent = line.audio !== null ? '⟳' : '⊕'
@@ -658,6 +659,7 @@ export class ConversationEditor {
         recBtn.title = 'Re-record line'
         recBtn.disabled = false
         playBtn.style.display = 'inline-block'
+        enhBtn.style.display = 'inline-block'
       } catch (e: any) {
         recBtn.textContent = '🎙'
         recBtn.title = `Save failed: ${e?.message ?? e}`
@@ -667,6 +669,36 @@ export class ConversationEditor {
 
     audioSlot.appendChild(recBtn)
     audioSlot.appendChild(recStopBtn)
+
+    // Enhance button - denoise current line audio via DeepFilterNet
+    const enhBtn = document.createElement('button')
+    enhBtn.className = 'conv-tts-btn conv-enh-btn'
+    enhBtn.textContent = '✨'
+    enhBtn.title = 'Enhance (denoise)'
+    enhBtn.style.display = line.audio !== null ? 'inline-block' : 'none'
+
+    enhBtn.onclick = async () => {
+      if (line.audio === null) return
+      const state = getState()
+      if (!state.projectSlug || !containerId) return
+      enhBtn.disabled = true
+      enhBtn.textContent = '⏳'
+      try {
+        const result = await api.enhanceLine(state.projectSlug, this.entitySlug, containerId, idx, line.audio)
+        line.audio = result.asset_id
+        enhBtn.textContent = '✨'
+        enhBtn.title = 'Re-enhance'
+        enhBtn.disabled = false
+        const audio = row.querySelector('audio.conv-line-player') as HTMLAudioElement | null
+        if (audio && state.projectSlug) { audio.src = api.assetFileUrl(state.projectSlug, result.asset_id); audio.load() }
+      } catch (e: any) {
+        enhBtn.textContent = '✨'
+        enhBtn.title = `Enhance failed: ${e?.message ?? e}`
+        enhBtn.disabled = false
+      }
+    }
+
+    audioSlot.appendChild(enhBtn)
     row.appendChild(audioSlot)
 
     // Line actions
