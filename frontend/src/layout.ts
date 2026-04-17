@@ -54,11 +54,16 @@ export function initLayout(appEl: HTMLElement): void {
   layout.loadLayout(LAYOUT_CONFIG)
   layout.init()
 
-  // Recalculate pane sizes whenever the app container changes size
-  // (covers window resize, devtools open/close, panel drags)
-  const ro = new ResizeObserver((entries) => {
-    const e = entries[0].contentRect
-    layout.updateSize(e.width, e.height)
+  // Recalculate pane sizes whenever the app container changes size.
+  // Uses requestAnimationFrame to ensure GL reads post-paint dimensions.
+  let _rafId: number | null = null
+  const ro = new ResizeObserver(() => {
+    if (_rafId !== null) cancelAnimationFrame(_rafId)
+    _rafId = requestAnimationFrame(() => {
+      _rafId = null
+      const r = appEl.getBoundingClientRect()
+      layout.updateSize(r.width, r.height)
+    })
   })
   ro.observe(appEl)
 }

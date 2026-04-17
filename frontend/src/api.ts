@@ -11,6 +11,7 @@ export interface Entity {
   type: string
   display_name: string
   parent_slug: string | null
+  updated_at?: string | null
 }
 
 export interface EntityDetail extends Entity {

@@ -263,66 +263,181 @@ export class NavPane {
   // ---- tree view ----
 
   private _treeView(): HTMLElement {
-    const ul = document.createElement('ul')
-    ul.className = 'nav-tree'
+    const wrap = document.createElement('div')
+    wrap.className = 'nav-tree-wrap'
 
-    // Game entity at top
-    const gameEntity = this.entities.find(e => e.type === 'game')
-    if (gameEntity) {
-      const chapters = this.entities.filter(e => e.type === 'chapter')
-      ul.appendChild(this._gameGroup(gameEntity, chapters))
-    }
+    const gameEntity  = this.entities.find(e => e.type === 'game')
+    const chapters    = this.entities.filter(e => e.type === 'chapter')
+    const locations   = this.entities.filter(e => e.type === 'location')
+    const items       = this.entities.filter(e => e.type === 'item')
+    const characters  = this.entities.filter(e => e.type === 'character')
 
-    // Locations, items (flat groups)
-    for (const type of (['location', 'item'] as const)) {
-      const group = this.entities.filter(e => e.type === type)
-      const li = document.createElement('li')
-      li.className = 'nav-group'
-      if (type === 'location') {
-        const labelRow = document.createElement('div')
-        labelRow.className = 'nav-group-label-row'
-        const label = document.createElement('span')
-        label.className = 'nav-group-label nav-group-label--map'
-        label.textContent = `${TYPE_PREFIX[type]} ${type}s (${group.length})`
-        label.title = 'Open world map'
-        label.onclick = () => showWorldMap(this.entities)
-        labelRow.appendChild(label)
+    // section key -> items count (for proportionate sizing)
+    const sections: { key: string; label: string; count: number; content: () => HTMLElement }[] = [
+      {
+        key: 'game',
+        label: `G / ?? chapters (${chapters.length})`,
+        count: chapters.length + 1,
+        content: () => {
+          const ul = document.createElement('ul')
+          ul.className = 'nav-tree-section-list'
+          if (gameEntity) {
+            const chapters2 = this.entities.filter(e => e.type === 'chapter')
+            ul.appendChild(this._gameGroup(gameEntity, chapters2))
+          }
+          return ul
+        },
+      },
+      {
+        key: 'location',
+        label: `@@ locations (${locations.length})`,
+        count: locations.length,
+        content: () => {
+          const ul = document.createElement('ul')
+          ul.className = 'nav-tree-section-list'
+          for (const e of locations) ul.appendChild(this._entityItem(e))
+          return ul
+        },
+      },
+      {
+        key: 'item',
+        label: `~~ items (${items.length})`,
+        count: items.length,
+        content: () => {
+          const ul = document.createElement('ul')
+          ul.className = 'nav-tree-section-list'
+          for (const e of items) ul.appendChild(this._entityItem(e))
+          return ul
+        },
+      },
+      {
+        key: 'character',
+        label: `## characters (${characters.length})`,
+        count: characters.length,
+        content: () => {
+          const ul = document.createElement('ul')
+          ul.className = 'nav-tree-section-list'
+          for (const char of characters) {
+            const convs = this.entities.filter(e => e.type === 'conversation' && e.parent_slug === char.slug)
+            ul.appendChild(this._characterGroup(char, convs))
+          }
+          return ul
+        },
+      },
+    ]
+
+    // modes: 'collapsed' | 'proportionate' | 'maximised'
+    // default all proportionate; restore from sessionStorage
+    const storageKey = `nav-section-modes-${getState().projectSlug ?? ''}`
+    let modes: Record<string, 'collapsed' | 'proportionate' | 'maximised'> = { game: 'proportionate', location: 'proportionate', item: 'proportionate', character: 'proportionate' }
+    try { const stored = sessionStorage.getItem(storageKey); if (stored) modes = { ...modes, ...JSON.parse(stored) } } catch (_) {}
+
+    const persist = () => { try { sessionStorage.setItem(storageKey, JSON.stringify(modes)) } catch (_) {} }
+
+    const sectionEls: { key: string; el: HTMLElement; listWrap: HTMLElement }[] = []
+
+    for (const sec of sections) {
+      const el = document.createElement('div')
+      el.className = 'nav-section'
+      el.dataset.sectionKey = sec.key
+
+      const hdr = document.createElement('div')
+      hdr.className = 'nav-section-hdr'
+
+      const labelSpan = document.createElement('span')
+      labelSpan.className = 'nav-section-label'
+      if (sec.key === 'location') {
+        labelSpan.classList.add('nav-group-label--map')
+        labelSpan.title = 'Open world map'
+        labelSpan.onclick = () => showWorldMap(this.entities)
+      }
+      labelSpan.textContent = sec.label
+      hdr.appendChild(labelSpan)
+
+      // Map button for locations
+      if (sec.key === 'location') {
         const mapBtn = document.createElement('button')
         mapBtn.className = 'nav-action-btn nav-map-btn'
         mapBtn.title = 'World map'
         mapBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M3 7l6-3 6 3 6-3v13l-6 3-6-3-6 3V7z"/><line x1="9" y1="4" x2="9" y2="17"/><line x1="15" y1="7" x2="15" y2="20"/></svg>`
         mapBtn.onclick = (e) => { e.stopPropagation(); showWorldMap(this.entities) }
-        labelRow.appendChild(mapBtn)
-        li.appendChild(labelRow)
-      } else {
-        const label = document.createElement('span')
-        label.className = 'nav-group-label'
-        label.textContent = `${TYPE_PREFIX[type]} ${type}s (${group.length})`
-        li.appendChild(label)
+        hdr.appendChild(mapBtn)
       }
-      const children = document.createElement('ul')
-      for (const entity of group) children.appendChild(this._entityItem(entity))
-      li.appendChild(children)
-      ul.appendChild(li)
+
+      const modeControls = document.createElement('span')
+      modeControls.className = 'nav-section-modes'
+
+      const mkModeBtn = (symbol: string, title: string, mode: 'collapsed' | 'proportionate' | 'maximised') => {
+        const btn = document.createElement('button')
+        btn.className = 'nav-section-mode-btn'
+        btn.textContent = symbol
+        btn.title = title
+        btn.dataset.mode = mode
+        btn.onclick = (e) => {
+          e.stopPropagation()
+          if (modes[sec.key] === mode) return
+          // If maximising, set all others to collapsed
+          if (mode === 'maximised') {
+            for (const k of Object.keys(modes)) modes[k] = k === sec.key ? 'maximised' : 'collapsed'
+          } else {
+            // If currently maximised and switching away, restore all others to proportionate
+            if (modes[sec.key] === 'maximised') {
+              for (const k of Object.keys(modes)) if (k !== sec.key) modes[k] = 'proportionate'
+            }
+            modes[sec.key] = mode
+          }
+          persist()
+          _applyModes()
+        }
+        modeControls.appendChild(btn)
+        return btn
+      }
+
+      mkModeBtn('▸', 'Collapse', 'collapsed')
+      mkModeBtn('≡', 'Proportionate', 'proportionate')
+      mkModeBtn('▲', 'Maximise', 'maximised')
+
+      hdr.appendChild(modeControls)
+      el.appendChild(hdr)
+
+      const listWrap = document.createElement('div')
+      listWrap.className = 'nav-section-list'
+      listWrap.appendChild(sec.content())
+      el.appendChild(listWrap)
+
+      wrap.appendChild(el)
+      sectionEls.push({ key: sec.key, el, listWrap })
     }
 
-    // Characters with nested conversations
-    const characters = this.entities.filter(e => e.type === 'character')
-    const charLi = document.createElement('li')
-    charLi.className = 'nav-group'
-    const charLabel = document.createElement('span')
-    charLabel.className = 'nav-group-label'
-    charLabel.textContent = `## characters (${characters.length})`
-    charLi.appendChild(charLabel)
-    const charList = document.createElement('ul')
-    for (const char of characters) {
-      const convs = this.entities.filter(e => e.type === 'conversation' && e.parent_slug === char.slug)
-      charList.appendChild(this._characterGroup(char, convs))
+    const _applyModes = () => {
+      const totalCount = sections.reduce((s, sec) => s + Math.max(sec.count, 1), 0)
+      for (const { key, el, listWrap } of sectionEls) {
+        const mode = modes[key]
+        // Update active button
+        el.querySelectorAll('.nav-section-mode-btn').forEach(btn => {
+          (btn as HTMLElement).classList.toggle('active', (btn as HTMLElement).dataset.mode === mode)
+        })
+        el.dataset.mode = mode
+        if (mode === 'collapsed') {
+          el.style.flex = '0 0 auto'
+          listWrap.style.display = 'none'
+        } else if (mode === 'maximised') {
+          el.style.flex = '1 1 0'
+          listWrap.style.display = ''
+        } else {
+          // proportionate: weight by item count
+          const sec = sections.find(s => s.key === key)!
+          const weight = Math.max(sec.count, 1) / totalCount
+          el.style.flex = `${weight} 1 0`
+          listWrap.style.display = ''
+        }
+      }
     }
-    charLi.appendChild(charList)
-    ul.appendChild(charLi)
-    return ul
+
+    _applyModes()
+    return wrap
   }
+
 
   private _gameGroup(game: Entity, chapters: Entity[]): HTMLElement {
     const li = document.createElement('li')

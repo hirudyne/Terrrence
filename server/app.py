@@ -733,7 +733,7 @@ def list_entities(
         if type:
             rows = conn.execute(
                 """SELECT e.slug, e.type, e.display_name,
-                          p.slug AS parent_slug
+                          p.slug AS parent_slug, e.updated_at
                    FROM entities e
                    LEFT JOIN entities p ON p.id = e.parent_id
                    WHERE e.project_id = ? AND e.type = ?""",
@@ -742,13 +742,13 @@ def list_entities(
         else:
             rows = conn.execute(
                 """SELECT e.slug, e.type, e.display_name,
-                          p.slug AS parent_slug
+                          p.slug AS parent_slug, e.updated_at
                    FROM entities e
                    LEFT JOIN entities p ON p.id = e.parent_id
                    WHERE e.project_id = ?""",
                 (project["id"],),
             ).fetchall()
-    return [{"slug": r["slug"], "type": r["type"], "display_name": r["display_name"], "parent_slug": r["parent_slug"]} for r in rows]
+    return [{"slug": r["slug"], "type": r["type"], "display_name": r["display_name"], "parent_slug": r["parent_slug"], "updated_at": r["updated_at"]} for r in rows]
 
 
 @app.get("/projects/{project_slug}/entities/{entity_slug}")
