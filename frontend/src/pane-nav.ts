@@ -82,6 +82,13 @@ export class NavPane {
 
   async load(projectSlug: string) {
     this.entities = await api.listEntities(projectSlug)
+    // Ensure ownership is known so share panel renders correctly on reload
+    if (!this._ownedProjects.has(projectSlug) && this._ownedProjects.size === 0) {
+      try {
+        const projects = await api.listProjects()
+        this._ownedProjects = new Set(projects.filter(p => p.owned).map(p => p.slug))
+      } catch (_) {}
+    }
     this._render()
   }
 

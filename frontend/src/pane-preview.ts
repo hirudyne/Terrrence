@@ -48,26 +48,28 @@ export class PreviewPane {
     const state = getState()
     if (!state.projectSlug) return
     try {
-      const [detail, assets, tags] = await Promise.all([
+      const [detail, assets, tags, backlinks] = await Promise.all([
         api.getEntity(state.projectSlug, slug),
         api.listEntityAssets(state.projectSlug, slug),
         api.listEntityTags(state.projectSlug, slug),
+        api.getBacklinks(state.projectSlug, slug),
       ])
       this._lastSnapshot = JSON.stringify({ body: detail.body, assets: assets.map(a => a.id), tags: tags.map(t => t.id) })
-      this._render(detail, assets, tags)
+      this._render(detail, assets, tags, backlinks)
       this.pollTimer = setInterval(async () => {
         const s = getState()
         if (!s.projectSlug || !this.currentSlug) return
         try {
-          const [d, a, t] = await Promise.all([
+          const [d, a, t, bl] = await Promise.all([
             api.getEntity(s.projectSlug, this.currentSlug),
             api.listEntityAssets(s.projectSlug, this.currentSlug),
             api.listEntityTags(s.projectSlug, this.currentSlug),
+            api.getBacklinks(s.projectSlug, this.currentSlug),
           ])
           const snapshot = JSON.stringify({ body: d.body, assets: a.map((x: Asset) => x.id), tags: t.map((x: {id:number}) => x.id) })
           if (snapshot !== this._lastSnapshot && !this.el.querySelector('.game-settings-input:focus, .preview-body-edit:focus') && !this._generating) {
             this._lastSnapshot = snapshot
-            this._render(d, a, t)
+            this._render(d, a, t, bl)
           }
         } catch (_) {}
       }, 2000)
@@ -76,7 +78,7 @@ export class PreviewPane {
     }
   }
 
-  private _render(detail: EntityDetail, assets: Asset[], tags: {id:number;name:string}[]) {
+  private _render(detail: EntityDetail, assets: Asset[], tags: {id:number;name:string}[], backlinks: {slug:string;type:string;display_name:string;occurrences:number}[] = []) {
     const state = getState()
     this.el.innerHTML = ''
 
@@ -165,6 +167,29 @@ export class PreviewPane {
     tagSection.className = 'preview-tags'
     this._renderTags(tagSection, tags, detail.slug, state.projectSlug!)
     this.el.appendChild(tagSection)
+
+    // -- backlinks --
+    if (backlinks.length > 0) {
+      const blSection = document.createElement('div')
+      blSection.className = 'preview-backlinks'
+      const blHeading = document.createElement('div')
+      blHeading.className = 'preview-section-heading'
+      blHeading.textContent = `Referenced by (${backlinks.length})`
+      blSection.appendChild(blHeading)
+      const blList = document.createElement('div')
+      blList.className = 'preview-backlinks-list'
+      const TYPE_PREFIX_BL: Record<string,string> = { location:'@@', character:'##', item:'~~', chapter:'??', event:'!!', conversation:'\u201c\u201d', game:'G' }
+      for (const bl of backlinks) {
+        const chip = document.createElement('button')
+        chip.className = 'backlink-chip'
+        chip.title = bl.slug
+        chip.textContent = `${TYPE_PREFIX_BL[bl.type] ?? ''} ${bl.display_name}`
+        chip.onclick = () => setState({ previewEntitySlug: bl.slug })
+        blList.appendChild(chip)
+      }
+      blSection.appendChild(blList)
+      this.el.appendChild(blSection)
+    }
 
     // -- assets --
     const assetSection = document.createElement('div')

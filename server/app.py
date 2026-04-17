@@ -684,7 +684,41 @@ def rename_entity(
                 (new_display_name, entity["id"]),
             )
 
+    # Cascade display_name change into body-text token references across all entity files.
+    # Applies regardless of whether the slug changed.
+    old_display_name = entity["display_name"]
+    if new_display_name != old_display_name:
+        _cascade_token_rename(project_slug, entity_type, old_display_name, new_display_name)
+
     return {"slug": new_slug, "display_name": new_display_name, "type": entity_type}
+
+
+def _cascade_token_rename(project_slug: str, entity_type: str, old_display: str, new_display: str) -> None:
+    """Replace inline token references to old_display with new_display across all entity body files."""
+    delimiters: dict[str, tuple[str, str]] = {
+        "location":     ("@@", "@@"),
+        "character":    ("##", "##"),
+        "item":         ("~~", "~~"),
+        "chapter":      ("??", "??"),
+        "conversation": ("\u201c\u201c", "\u201d\u201d"),
+    }
+    pair = delimiters.get(entity_type)
+    if not pair:
+        return
+    open_d, close_d = pair
+    old_token = f"{open_d}{old_display}{close_d}"
+    new_token = f"{open_d}{new_display}{close_d}"
+
+    content_dir = PROJECTS_ROOT / project_slug / "content"
+    for md_path in content_dir.glob("*.md"):
+        try:
+            post = fm.load(str(md_path))
+            if old_token in post.content:
+                post.content = post.content.replace(old_token, new_token)
+                with open(str(md_path), "w", encoding="utf-8") as f:
+                    f.write(fm.dumps(post))
+        except Exception as e:
+            log.warning("rename cascade body: failed to update %s: %s", md_path, e)
 
 
 @app.get("/projects/{project_slug}/entities")
@@ -815,6 +849,35 @@ def ensure_entity(
         entity_id = cur.lastrowid
     _write_entity_file(project_slug, slug, display_name, body.type, "")
     return {"slug": slug, "type": body.type, "display_name": display_name, "created": True}
+
+
+
+@app.get("/projects/{project_slug}/entities/{entity_slug}/backlinks")
+def get_backlinks(
+    project_slug: str,
+    entity_slug: str,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+    with db() as conn:
+        target = conn.execute(
+            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            (project["id"], entity_slug),
+        ).fetchone()
+        if not target:
+            raise HTTPException(status_code=404, detail="entity not found")
+        rows = conn.execute(
+            """
+            SELECT e.slug, e.type, e.display_name, er.occurrences
+            FROM entity_refs er
+            JOIN entities e ON e.id = er.src_entity_id
+            WHERE er.dst_entity_id = ?
+            ORDER BY e.type, e.display_name
+            """,
+            (target["id"],),
+        ).fetchall()
+    return [{"slug": r["slug"], "type": r["type"], "display_name": r["display_name"], "occurrences": r["occurrences"]} for r in rows]
 
 
 @app.patch("/projects/{project_slug}/entities/{entity_slug}")

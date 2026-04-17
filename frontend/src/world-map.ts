@@ -83,8 +83,13 @@ function _isValidEdge(x: unknown): boolean {
 
 // --- Connection ID ---
 
-function _connId(slugA: string, slugB: string): string {
-  return [slugA, slugB].sort().join('__')
+function _connId(slugA: string, slugB: string, existing: ConnectionHalf[]): string {
+  const base = [slugA, slugB].sort().join('__')
+  const used = new Set(existing.map(h => h.id))
+  if (!used.has(base)) return base
+  let n = 2
+  while (used.has(`${base}__${n}`)) n++
+  return `${base}__${n}`
 }
 
 // --- Overlay builder ---
@@ -602,10 +607,7 @@ function _startConnection(
     const toEntry = entryMap.get(toSlug)
     if (!toEntry) return
 
-    const connId = _connId(fromEntry.entity.slug, toSlug)
-
-    // Avoid duplicate
-    if (fromEntry.connections.some(h => h.id === connId)) return
+    const connId = _connId(fromEntry.entity.slug, toSlug, [...fromEntry.connections, ...toEntry.connections])
 
     const canvasRect2 = canvas.getBoundingClientRect()
     const cx = ev.clientX - canvasRect2.left

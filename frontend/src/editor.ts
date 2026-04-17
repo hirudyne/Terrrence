@@ -79,8 +79,18 @@ const tokenHighlighter = ViewPlugin.fromClass(
             : 'event'
           const delimLen = 2
           const inner = raw.slice(delimLen, -delimLen).trim()
+          if (!_pendingToken || _pendingToken.type !== type) {
+            // Update cursor class on editor dom
+            const dom = update.view.dom
+            dom.classList.forEach(c => { if (c.startsWith('cm-pending-')) dom.classList.remove(c) })
+            dom.classList.add(`cm-pending-${type}`)
+          }
           _pendingToken = { inner, type }
         } else {
+          if (_pendingToken) {
+            const dom = update.view.dom
+            dom.classList.forEach(c => { if (c.startsWith('cm-pending-')) dom.classList.remove(c) })
+          }
           _pendingToken = null
         }
       }
@@ -312,6 +322,12 @@ export function getOrCreateEditor(
       '.cm-token-event':     { color: '#e9c46a', fontWeight: 'bold' },
       '.cm-token-chapter':      { color: '#c77dff', fontWeight: 'bold' },
       '.cm-token-conversation': { color: '#ff9eb5', fontWeight: 'bold' },
+      '&.cm-pending-location .cm-cursor': { borderLeftColor: '#7ec8e3 !important', borderLeftWidth: '3px !important' },
+      '&.cm-pending-character .cm-cursor': { borderLeftColor: '#f4a261 !important', borderLeftWidth: '3px !important' },
+      '&.cm-pending-item .cm-cursor': { borderLeftColor: '#a8dadc !important', borderLeftWidth: '3px !important' },
+      '&.cm-pending-event .cm-cursor': { borderLeftColor: '#e9c46a !important', borderLeftWidth: '3px !important' },
+      '&.cm-pending-chapter .cm-cursor': { borderLeftColor: '#c77dff !important', borderLeftWidth: '3px !important' },
+      '&.cm-pending-conversation .cm-cursor': { borderLeftColor: '#ff9eb5 !important', borderLeftWidth: '3px !important' },
     }),
     EditorView.updateListener.of((update: ViewUpdate) => {
       if (!update.docChanged) return
