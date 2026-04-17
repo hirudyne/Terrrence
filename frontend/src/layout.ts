@@ -54,21 +54,10 @@ export function initLayout(appEl: HTMLElement): void {
   layout.loadLayout(LAYOUT_CONFIG)
   layout.init()
 
-  // GL's calculateAbsoluteSizes reads offsetWidth/offsetHeight from its own
-  // row element. Those are driven by inline styles GL previously wrote.
-  // If the container shrinks, the stale inline styles make offsetWidth/Height
-  // return the old dimensions. Fix: clear all inline width/height on GL's
-  // internal elements before calling updateSize so the browser reflows them
-  // from the container geometry, then updateSize reads correct values.
   const _sync = () => {
     const r = appEl.getBoundingClientRect()
     if (r.width <= 0 || r.height <= 0) return
-    // Clear stale inline sizes only from the root GL container and the row/column
-    // structural items - NOT .lm_content or .lm_stack which hold pane components.
-    appEl.querySelectorAll<HTMLElement>(
-      '.lm_goldenlayout, .lm_row, .lm_column'
-    ).forEach(el => { el.style.width = ''; el.style.height = '' })
-    // After clearing, let the browser reflow, then GL reads correct offsetW/H
+    layout.updateSize(r.width, r.height)
     requestAnimationFrame(() => layout.updateSize(r.width, r.height))
   }
 
