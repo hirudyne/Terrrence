@@ -54,16 +54,18 @@ export function initLayout(appEl: HTMLElement): void {
   layout.loadLayout(LAYOUT_CONFIG)
   layout.init()
 
-  // Recalculate pane sizes whenever the app container changes size.
-  // Uses requestAnimationFrame to ensure GL reads post-paint dimensions.
+  // Recalculate GL whenever the layout container changes size.
+  // rAF ensures we read post-paint pixel dimensions.
   let _rafId: number | null = null
-  const ro = new ResizeObserver(() => {
+  const _syncSize = () => {
     if (_rafId !== null) cancelAnimationFrame(_rafId)
     _rafId = requestAnimationFrame(() => {
       _rafId = null
-      const r = appEl.getBoundingClientRect()
-      layout.updateSize(r.width, r.height)
+      layout.updateSize(appEl.offsetWidth, appEl.offsetHeight)
     })
-  })
+  }
+  const ro = new ResizeObserver(_syncSize)
   ro.observe(appEl)
+  // Also sync on first paint in case the observer fires before GL is ready
+  window.addEventListener('load', _syncSize, { once: true })
 }
