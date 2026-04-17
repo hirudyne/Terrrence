@@ -54,21 +54,25 @@ export function initLayout(appEl: HTMLElement): void {
   layout.loadLayout(LAYOUT_CONFIG)
   layout.init()
 
+  // GL reads offsetWidth/offsetHeight from its own row element in calculateAbsoluteSizes.
+  // We must set the inline styles then force a reflow before GL reads them back.
+  // Two rAFs guarantee a full paint cycle between the style write and the re-read.
   const _sync = () => {
     const r = appEl.getBoundingClientRect()
-    if (r.width > 0 && r.height > 0) layout.updateSize(r.width, r.height)
+    if (r.width <= 0 || r.height <= 0) return
+    layout.updateSize(r.width, r.height)
+    // Second call after reflow so GL's row element offsetHeight is up to date
+    requestAnimationFrame(() => layout.updateSize(r.width, r.height))
   }
 
-  // Fire immediately after first paint
   requestAnimationFrame(_sync)
 
-  // Re-fire at 100ms and 600ms after any resize event to catch DPI/monitor transitions
   let _t1: ReturnType<typeof setTimeout> | null = null
   let _t2: ReturnType<typeof setTimeout> | null = null
   const _onResize = () => {
-    requestAnimationFrame(_sync)
     if (_t1) clearTimeout(_t1)
     if (_t2) clearTimeout(_t2)
+    requestAnimationFrame(_sync)
     _t1 = setTimeout(_sync, 100)
     _t2 = setTimeout(_sync, 600)
   }
