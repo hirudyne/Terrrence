@@ -66,6 +66,7 @@ export function initLayout(appEl: HTMLElement): void {
   }
   const ro = new ResizeObserver(_syncSize)
   ro.observe(appEl)
-  // Also sync on first paint in case the observer fires before GL is ready
+  window.addEventListener('resize', _syncSize)
   window.addEventListener('load', _syncSize, { once: true })
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', _syncSize)
 }
