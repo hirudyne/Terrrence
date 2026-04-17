@@ -23,10 +23,11 @@ async function boot() {
 
 function launch(app: HTMLElement) {
   app.innerHTML = ''
-  const layoutEl = document.createElement('div')
-  layoutEl.id = 'layout-root'
-  app.appendChild(layoutEl)
-  initLayout(layoutEl)
+  // Pass #app (position:fixed; inset:0) directly to GL.
+  // GL reads offsetWidth/offsetHeight from its container element; a child div
+  // with position:absolute inside a fixed parent can return stale dims on
+  // mobile portrait/landscape rotation. The fixed element itself is reliable.
+  initLayout(app)
 }
 
 boot()
