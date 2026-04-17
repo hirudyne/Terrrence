@@ -54,27 +54,26 @@ export function initLayout(appEl: HTMLElement): void {
   layout.loadLayout(LAYOUT_CONFIG)
   layout.init()
 
-  // Recalculate GL whenever the layout container changes size.
-  // rAF ensures we read post-paint pixel dimensions.
-  let _rafId: number | null = null
-  let _delayId: ReturnType<typeof setTimeout> | null = null
-  const _syncSize = () => {
-    if (_rafId !== null) cancelAnimationFrame(_rafId)
-    if (_delayId !== null) clearTimeout(_delayId)
-    _rafId = requestAnimationFrame(() => {
-      _rafId = null
-      layout.updateSize(window.innerWidth, window.innerHeight)
-      // Second sync after 150ms catches monitor-change cases where the first
-      // event fires before the browser commits the new viewport dimensions.
-      _delayId = setTimeout(() => {
-        _delayId = null
-        layout.updateSize(window.innerWidth, window.innerHeight)
-      }, 150)
-    })
+  const _sync = () => {
+    const r = appEl.getBoundingClientRect()
+    if (r.width > 0 && r.height > 0) layout.updateSize(r.width, r.height)
   }
-  const ro = new ResizeObserver(_syncSize)
-  ro.observe(appEl)
-  window.addEventListener('resize', _syncSize)
-  window.addEventListener('load', _syncSize, { once: true })
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', _syncSize)
+
+  // Fire immediately after first paint
+  requestAnimationFrame(_sync)
+
+  // Re-fire at 100ms and 600ms after any resize event to catch DPI/monitor transitions
+  let _t1: ReturnType<typeof setTimeout> | null = null
+  let _t2: ReturnType<typeof setTimeout> | null = null
+  const _onResize = () => {
+    requestAnimationFrame(_sync)
+    if (_t1) clearTimeout(_t1)
+    if (_t2) clearTimeout(_t2)
+    _t1 = setTimeout(_sync, 100)
+    _t2 = setTimeout(_sync, 600)
+  }
+
+  new ResizeObserver(_onResize).observe(appEl)
+  window.addEventListener('resize', _onResize)
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', _onResize)
 }
