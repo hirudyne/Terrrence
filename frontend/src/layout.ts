@@ -51,47 +51,21 @@ export function initLayout(appEl: HTMLElement): void {
     new PreviewPane(container.element as HTMLElement)
   })
 
+  // Set flag BEFORE init so intent is clear. GL checks it lazily at each
+  // resize event (not during init), so post-init also works - but pre-init
+  // documents that we own this container, not document.body.
+  ;(layout as any).resizeWithContainerAutomatically = true
   layout.loadLayout(LAYOUT_CONFIG)
   layout.init()
-  // GL only auto-resizes with its own internal ResizeObserver when the container
-  // is document.body. Enable it for our custom container element.
-  ;(layout as any).resizeWithContainerAutomatically = true
 
-  const _sync = () => {
-    // updateSizeFromContainer() reads from the container element directly,
-    // bypassing GL's own stale row/column inline styles that cause the
-    // landscape->portrait resize to silently use old dimensions.
-    // It is marked @internal but is the only reliable path.
-    const gl = layout as unknown as Record<string, () => void>
-    gl['updateSizeFromContainer']()
-    requestAnimationFrame(() => gl['updateSizeFromContainer']())
+  // visualViewport: position:fixed containers do not resize on iOS keyboard/pinch,
+  // so GL's internal ResizeObserver never fires for those events.
+  // Force a sync via the public API when visual viewport changes.
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      const { width, height } = appEl.getBoundingClientRect()
+      console.debug('[gl resize] visualViewport', width, height)
+      ;(layout as any).updateRootSize(true)
+    })
   }
-
-  requestAnimationFrame(_sync)
-
-  let _t1: ReturnType<typeof setTimeout> | null = null
-  let _t2: ReturnType<typeof setTimeout> | null = null
-  const _onResize = () => {
-    if (_t1) clearTimeout(_t1)
-    if (_t2) clearTimeout(_t2)
-    requestAnimationFrame(_sync)
-    _t1 = setTimeout(_sync, 100)
-    _t2 = setTimeout(_sync, 600)
-  }
-
-  new ResizeObserver(_onResize).observe(appEl)
-  window.addEventListener('resize', _onResize)
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', _onResize)
-
-  // Moving a window between monitors does not fire a resize event.
-  // Poll innerWidth/innerHeight at 500ms intervals and sync if they change.
-  let _lastW = window.innerWidth
-  let _lastH = window.innerHeight
-  setInterval(() => {
-    if (window.innerWidth !== _lastW || window.innerHeight !== _lastH) {
-      _lastW = window.innerWidth
-      _lastH = window.innerHeight
-      _onResize()
-    }
-  }, 500)
 }
