@@ -35,47 +35,28 @@ const LAYOUT_CONFIG: LayoutConfig = {
 }
 
 export function initLayout(appEl: HTMLElement): void {
+  // `new GoldenLayout(containerElement)` auto-calls init() when called with a
+  // single container argument (not the deprecated config-object form).
+  // init() attaches GL's internal ResizeObserver to the container element.
+  //
+  // Flag must be set BEFORE the observer fires for the first real event.
+  // We set it between construction and loadLayout, which runs synchronously
+  // before any user interaction can trigger resize events.
   const layout = new GoldenLayout(appEl)
+  ;(layout as any).resizeWithContainerAutomatically = true
 
   layout.registerComponentFactoryFunction('nav', (container) => {
     const nav = new NavPane(container.element as HTMLElement)
-    // Expose globally so editor can optimistically add entities
     ;(window as any)._terrrenceNav = nav
   })
-
   layout.registerComponentFactoryFunction('editor', (container) => {
     new EditorPane(container.element as HTMLElement)
   })
-
   layout.registerComponentFactoryFunction('preview', (container) => {
     new PreviewPane(container.element as HTMLElement)
   })
 
-  // Set flag BEFORE init so intent is clear. GL checks it lazily at each
-  // resize event (not during init), so post-init also works - but pre-init
-  // documents that we own this container, not document.body.
-  ;(layout as any).resizeWithContainerAutomatically = true
+  // loadLayout is the correct post-auto-init path to install content.
+  // Do NOT call init() again - it creates a second GroundItem and breaks sizing.
   layout.loadLayout(LAYOUT_CONFIG)
-  layout.init()
-
-  // GL's internal ResizeObserver fires handleContainerResize() -> processResizeWithDebounce()
-  // -> updateSizeFromContainer() after 100ms debounce. That reads offsetWidth/offsetHeight
-  // from the container and calls setSize(). This should cover all window/devtools resizes.
-  //
-  // visualViewport fires on Windows too (devtools open/close can trigger it in Chrome).
-  // updateSizeFromContainer() is the correct call - it re-reads container dims.
-  // updateRootSize() only redistributes already-stored dims, wrong for container resize.
-  const _glSync = () => {
-    const ow = appEl.offsetWidth
-    const oh = appEl.offsetHeight
-    const { width: bw, height: bh } = appEl.getBoundingClientRect()
-    console.debug('[gl sync] offset:', ow, oh, '| bcr:', Math.round(bw), Math.round(bh))
-    ;(layout as any).updateSizeFromContainer()
-  }
-
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', _glSync)
-  }
-  // Belt-and-braces for devtools panel resize on PC which may not fire visualViewport.
-  window.addEventListener('resize', _glSync)
 }
