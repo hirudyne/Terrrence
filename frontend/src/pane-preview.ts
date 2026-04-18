@@ -54,8 +54,11 @@ export class PreviewPane {
         api.listEntityTags(state.projectSlug, slug),
         api.getBacklinks(state.projectSlug, slug),
       ])
+      const locations = detail.type === 'character'
+        ? await api.listEntities(state.projectSlug, 'location')
+        : []
       this._lastSnapshot = JSON.stringify({ body: detail.body, assets: assets.map(a => a.id), tags: tags.map(t => t.id) })
-      this._render(detail, assets, tags, backlinks)
+      this._render(detail, assets, tags, backlinks, locations)
       this.pollTimer = setInterval(async () => {
         const s = getState()
         if (!s.projectSlug || !this.currentSlug) return
@@ -69,7 +72,8 @@ export class PreviewPane {
           const snapshot = JSON.stringify({ body: d.body, assets: a.map((x: Asset) => x.id), tags: t.map((x: {id:number}) => x.id) })
           if (snapshot !== this._lastSnapshot && !this.el.querySelector('.game-settings-input:focus, .preview-body-edit:focus') && !this._generating) {
             this._lastSnapshot = snapshot
-            this._render(d, a, t, bl)
+            const locs = d.type === 'character' ? await api.listEntities(s.projectSlug!, 'location') : []
+            this._render(d, a, t, bl, locs)
           }
         } catch (_) {}
       }, 2000)
@@ -78,7 +82,7 @@ export class PreviewPane {
     }
   }
 
-  private _render(detail: EntityDetail, assets: Asset[], tags: {id:number;name:string}[], backlinks: {slug:string;type:string;display_name:string;occurrences:number}[] = []) {
+  private _render(detail: EntityDetail, assets: Asset[], tags: {id:number;name:string}[], backlinks: {slug:string;type:string;display_name:string;occurrences:number}[] = [], locations: import('./api').Entity[] = []) {
     const state = getState()
     this.el.innerHTML = ''
 
@@ -159,7 +163,7 @@ export class PreviewPane {
 
     // -- character settings (physical appearance, voice description) --
     if (detail.type === 'character') {
-      this.el.appendChild(this._renderCharacterSettings(detail, state.projectSlug!))
+      this.el.appendChild(this._renderCharacterSettings(detail, state.projectSlug!, locations))
     }
 
     // -- location settings (scene image selector) --
@@ -417,7 +421,7 @@ export class PreviewPane {
     return section
   }
 
-  private _renderCharacterSettings(detail: EntityDetail, projectSlug: string): HTMLElement {
+  private _renderCharacterSettings(detail: EntityDetail, projectSlug: string, locations: import('./api').Entity[] = []): HTMLElement {
     const section = document.createElement('div')
     section.className = 'game-settings'
 
@@ -465,6 +469,77 @@ export class PreviewPane {
       'e.g. a gruff older male voice, slow deliberate speech, slight northern accent, close-sounding environment',
       300
     )
+
+
+    // Start location
+    const slHeading = document.createElement('div')
+    slHeading.className = 'game-settings-heading'
+    slHeading.textContent = 'Start Location'
+    section.appendChild(slHeading)
+
+    const startLocMeta = (detail.meta as Record<string, unknown>)?.['start_location'] as {location?: string; x?: number; y?: number} | undefined ?? {}
+
+    const locRow = document.createElement('div')
+    locRow.className = 'start-loc-row'
+
+    const locSel = document.createElement('select')
+    locSel.className = 'modal-select'
+    const noneOpt = document.createElement('option')
+    noneOpt.value = ''
+    noneOpt.textContent = '(none)'
+    locSel.appendChild(noneOpt)
+    for (const loc of locations) {
+      const opt = document.createElement('option')
+      opt.value = loc.slug
+      opt.textContent = loc.display_name
+      if (loc.slug === startLocMeta.location) opt.selected = true
+      locSel.appendChild(opt)
+    }
+    locRow.appendChild(locSel)
+    section.appendChild(locRow)
+
+    const xyRow = document.createElement('div')
+    xyRow.className = 'start-loc-xy-row'
+
+    const mkXY = (label: string, key: 'x' | 'y') => {
+      const wrap = document.createElement('div')
+      wrap.className = 'start-loc-xy-field'
+      const lbl = document.createElement('label')
+      lbl.className = 'modal-field-label'
+      lbl.textContent = label
+      const inp = document.createElement('input')
+      inp.type = 'number'
+      inp.className = 'modal-input start-loc-xy-input'
+      inp.min = '0'; inp.max = '1'; inp.step = '0.01'
+      inp.value = startLocMeta[key] !== undefined ? String(startLocMeta[key]) : '0.5'
+      wrap.appendChild(lbl)
+      wrap.appendChild(inp)
+      xyRow.appendChild(wrap)
+      return inp
+    }
+    const xInp = mkXY('X', 'x')
+    const yInp = mkXY('Y', 'y')
+    section.appendChild(xyRow)
+
+    let _slTimer: ReturnType<typeof setTimeout> | null = null
+    const _saveStartLoc = () => {
+      if (_slTimer) clearTimeout(_slTimer)
+      _slTimer = setTimeout(async () => {
+        const locVal = locSel.value
+        if (!locVal) {
+          try { await api.updateEntityMeta(projectSlug, detail.slug, { start_location: '' }) } catch (_) {}
+          return
+        }
+        const x = Math.max(0, Math.min(1, parseFloat(xInp.value) || 0.5))
+        const y = Math.max(0, Math.min(1, parseFloat(yInp.value) || 0.5))
+        try {
+          await api.updateEntityMeta(projectSlug, detail.slug, { start_location: { location: locVal, x, y } })
+        } catch (e) { console.debug('[terrrence] start_location save error', e) }
+      }, 800)
+    }
+    locSel.onchange = _saveStartLoc
+    xInp.oninput = _saveStartLoc
+    yInp.oninput = _saveStartLoc
 
     // Voice reference recording
     section.appendChild(this._renderVoiceRecorder(detail.slug, projectSlug))
