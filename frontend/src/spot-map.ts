@@ -1,5 +1,12 @@
 import { api, Entity, EntityDetail } from './api'
 
+interface Connection {
+  id: string
+  to: string
+  from_edge?: unknown
+  to_edge?: unknown
+}
+
 export async function showSpotMap(
   projectSlug: string,
   location: Entity,
@@ -7,7 +14,6 @@ export async function showSpotMap(
   onClose: () => void,
 ): Promise<void> {
 
-  // Fetch full details for location (scene_image) and all spots (meta: x, y, temperature)
   const [locDetail, ...spotDetails] = await Promise.all([
     api.getEntity(projectSlug, location.slug),
     ...initialSpots.map(s => api.getEntity(projectSlug, s.slug)),
@@ -20,7 +26,6 @@ export async function showSpotMap(
   panel.className = 'spot-map-panel'
   overlay.appendChild(panel)
 
-  // Header
   const hdr = document.createElement('div')
   hdr.className = 'spot-map-header'
   const title = document.createElement('span')
@@ -34,11 +39,9 @@ export async function showSpotMap(
   hdr.appendChild(closeBtn)
   panel.appendChild(hdr)
 
-  // Body: tray + canvas
   const body = document.createElement('div')
   body.className = 'spot-map-body'
 
-  // Left tray - unplaced spots
   const tray = document.createElement('div')
   tray.className = 'spot-map-tray'
   const trayHeading = document.createElement('div')
@@ -46,14 +49,12 @@ export async function showSpotMap(
   trayHeading.textContent = 'Unplaced spots'
   tray.appendChild(trayHeading)
 
-  // Canvas area
   const canvasWrap = document.createElement('div')
   canvasWrap.className = 'spot-map-canvas-wrap'
 
   const canvas = document.createElement('div')
   canvas.className = 'spot-map-canvas'
 
-  // Background image
   const sceneImageId = (locDetail.meta as Record<string, unknown>)?.['scene_image'] as number | null ?? null
   if (sceneImageId) {
     canvas.style.backgroundImage = `url(${api.assetFileUrl(projectSlug, sceneImageId)})`
@@ -68,21 +69,30 @@ export async function showSpotMap(
   panel.appendChild(body)
   document.body.appendChild(overlay)
 
-  // Build spot state from details
-  type SpotState = {
-    entity: Entity
-    detail: EntityDetail
-    el: HTMLElement | null   // null = in tray
-  }
+  type SpotState = { entity: Entity; detail: EntityDetail }
 
   const spots: SpotState[] = spotDetails.map((d, i) => ({
     entity: initialSpots[i],
     detail: d,
-    el: null,
   }))
 
+  // Parse connections from location frontmatter
+  const locConnections: Connection[] = (locDetail.meta as Record<string, unknown>)?.['connections'] as Connection[] ?? []
+
+  // Which connection IDs are already claimed by a spot in this location
+  const _claimedConnections = (): Set<string> => {
+    const claimed = new Set<string>()
+    for (const s of spots) {
+      const cid = (s.detail.meta as Record<string, unknown>)['connection_id'] as string | undefined
+      if (cid) claimed.add(cid)
+    }
+    return claimed
+  }
+
+  // Panel toggle per spot - track which slug has panel open
+  let _openPanel: string | null = null
+
   const _renderTray = () => {
-    // Remove old tray cards
     tray.querySelectorAll('.spot-tray-card').forEach(c => c.remove())
     for (const s of spots) {
       const meta = s.detail.meta as Record<string, unknown>
@@ -103,7 +113,9 @@ export async function showSpotMap(
   }
 
   const _renderCanvas = () => {
-    canvas.querySelectorAll('.spot-card').forEach(c => c.remove())
+    canvas.querySelectorAll('.spot-card, .spot-detail-panel').forEach(c => c.remove())
+    const claimed = _claimedConnections()
+
     for (const s of spots) {
       const meta = s.detail.meta as Record<string, unknown>
       const sx = meta['spot_x']
@@ -112,12 +124,13 @@ export async function showSpotMap(
       const x = Number(sx)
       const y = Number(sy)
       const temp = (meta['temperature'] as string) ?? 'cold'
+      const connId = (meta['connection_id'] as string) ?? ''
 
       const card = document.createElement('div')
       card.className = `spot-card spot-card--${temp}`
       card.style.left = `${x * 100}%`
       card.style.top = `${y * 100}%`
-      card.title = `${s.entity.display_name} [${temp}]`
+      card.title = `${s.entity.display_name} [${temp}]${connId ? ' [exit: ' + connId + ']' : ''}`
       card.dataset.slug = s.entity.slug
 
       const label = document.createElement('span')
@@ -125,7 +138,7 @@ export async function showSpotMap(
       label.textContent = s.entity.display_name
       card.appendChild(label)
 
-      // Temperature toggle button
+      // Temp toggle
       const toggleBtn = document.createElement('button')
       toggleBtn.className = 'spot-temp-btn'
       toggleBtn.title = `Toggle temperature (currently ${temp})`
@@ -141,7 +154,7 @@ export async function showSpotMap(
       }
       card.appendChild(toggleBtn)
 
-      // Unplace button
+      // Unplace
       const unplaceBtn = document.createElement('button')
       unplaceBtn.className = 'spot-unplace-btn'
       unplaceBtn.title = 'Remove from map'
@@ -152,11 +165,24 @@ export async function showSpotMap(
           await api.updateEntityMeta(projectSlug, s.entity.slug, { spot_x: '', spot_y: '' })
           ;(s.detail.meta as Record<string, unknown>)['spot_x'] = undefined
           ;(s.detail.meta as Record<string, unknown>)['spot_y'] = undefined
+          if (_openPanel === s.entity.slug) _openPanel = null
           _renderCanvas()
           _renderTray()
         } catch (err) { console.debug('[terrrence] unplace error', err) }
       }
       card.appendChild(unplaceBtn)
+
+      // Toggle detail panel button
+      const detailToggle = document.createElement('button')
+      detailToggle.className = 'spot-detail-toggle'
+      detailToggle.title = 'Connection / settings'
+      detailToggle.textContent = connId ? 'E' : '+'
+      detailToggle.onclick = (e) => {
+        e.stopPropagation()
+        _openPanel = _openPanel === s.entity.slug ? null : s.entity.slug
+        _renderCanvas()
+      }
+      card.appendChild(detailToggle)
 
       // Drag to reposition
       card.draggable = true
@@ -166,10 +192,66 @@ export async function showSpotMap(
       }
 
       canvas.appendChild(card)
+
+      // Detail panel - rendered outside card so it isn't clipped
+      if (_openPanel === s.entity.slug) {
+        const dp = document.createElement('div')
+        dp.className = 'spot-detail-panel'
+        // Position below the card centre
+        dp.style.left = `${x * 100}%`
+        dp.style.top = `calc(${y * 100}% + 24px)`
+
+        const dpTitle = document.createElement('div')
+        dpTitle.className = 'spot-detail-title'
+        dpTitle.textContent = s.entity.display_name
+        dp.appendChild(dpTitle)
+
+        // Connection dropdown
+        const connLabel = document.createElement('label')
+        connLabel.className = 'spot-detail-label'
+        connLabel.textContent = 'Exit connection'
+        dp.appendChild(connLabel)
+
+        const connSel = document.createElement('select')
+        connSel.className = 'spot-detail-select'
+
+        const noneOpt = document.createElement('option')
+        noneOpt.value = ''
+        noneOpt.textContent = '(none)'
+        connSel.appendChild(noneOpt)
+
+        for (const conn of locConnections) {
+          // Available if unclaimed or claimed by this spot
+          if (claimed.has(conn.id) && conn.id !== connId) continue
+          const opt = document.createElement('option')
+          opt.value = conn.id
+          opt.textContent = `-> ${conn.to} (${conn.id})`
+          if (conn.id === connId) opt.selected = true
+          connSel.appendChild(opt)
+        }
+
+        connSel.onchange = async () => {
+          const newConnId = connSel.value
+          try {
+            await api.updateEntityMeta(projectSlug, s.entity.slug, { connection_id: newConnId === '' ? '' : newConnId })
+            ;(s.detail.meta as Record<string, unknown>)['connection_id'] = newConnId || undefined
+            _renderCanvas()
+          } catch (err) { console.debug('[terrrence] connection_id save error', err) }
+        }
+        dp.appendChild(connSel)
+
+        // Close panel button
+        const dpClose = document.createElement('button')
+        dpClose.className = 'spot-detail-close'
+        dpClose.textContent = 'Done'
+        dpClose.onclick = (e) => { e.stopPropagation(); _openPanel = null; _renderCanvas() }
+        dp.appendChild(dpClose)
+
+        canvas.appendChild(dp)
+      }
     }
   }
 
-  // Drop on canvas - place or reposition
   canvas.ondragover = (e) => { e.preventDefault(); e.dataTransfer!.dropEffect = 'move' }
   canvas.ondrop = async (e) => {
     e.preventDefault()

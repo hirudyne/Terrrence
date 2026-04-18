@@ -644,3 +644,38 @@ html, body { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden;
 
 /* ---- Spot token colour ---- */
 .cm-token-spot { color: #b5e48c; font-weight: bold; }
+
+/* ---- Spot detail panel ---- */
+.spot-detail-toggle {
+  position: absolute; bottom: 1px; right: 1px;
+  background: var(--bg2); border: 1px solid var(--border);
+  color: var(--text-dim); font-size: 0.6rem; line-height: 1;
+  padding: 1px 3px; border-radius: 2px; cursor: pointer;
+  display: none;
+}
+.spot-card:hover .spot-detail-toggle { display: block; }
+.spot-detail-panel {
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 20;
+  background: var(--bg); border: 1px solid var(--accent);
+  border-radius: 4px; padding: 8px; min-width: 200px;
+  display: flex; flex-direction: column; gap: 5px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.spot-detail-title {
+  font-size: 0.75rem; font-weight: 600; color: var(--text);
+  border-bottom: 1px solid var(--border); padding-bottom: 4px;
+}
+.spot-detail-label { font-size: 0.7rem; color: var(--text-dim); }
+.spot-detail-select {
+  background: var(--bg2); border: 1px solid var(--border);
+  color: var(--text); font-size: 0.75rem; border-radius: 3px; padding: 3px 5px;
+  width: 100%;
+}
+.spot-detail-close {
+  align-self: flex-end;
+  background: none; border: 1px solid var(--border); color: var(--text-dim);
+  font-size: 0.7rem; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+}
+.spot-detail-close:hover { color: var(--text); }
