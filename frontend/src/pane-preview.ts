@@ -54,7 +54,7 @@ export class PreviewPane {
         api.listEntityTags(state.projectSlug, slug),
         api.getBacklinks(state.projectSlug, slug),
       ])
-      const locations = detail.type === 'character'
+      const locations = (detail.type === 'character' || detail.type === 'item')
         ? await api.listEntities(state.projectSlug, 'location')
         : []
       this._lastSnapshot = JSON.stringify({ body: detail.body, assets: assets.map(a => a.id), tags: tags.map(t => t.id) })
@@ -72,7 +72,7 @@ export class PreviewPane {
           const snapshot = JSON.stringify({ body: d.body, assets: a.map((x: Asset) => x.id), tags: t.map((x: {id:number}) => x.id) })
           if (snapshot !== this._lastSnapshot && !this.el.querySelector('.game-settings-input:focus, .preview-body-edit:focus') && !this._generating) {
             this._lastSnapshot = snapshot
-            const locs = d.type === 'character' ? await api.listEntities(s.projectSlug!, 'location') : []
+            const locs = (d.type === 'character' || d.type === 'item') ? await api.listEntities(s.projectSlug!, 'location') : []
             this._render(d, a, t, bl, locs)
           }
         } catch (_) {}
@@ -164,6 +164,11 @@ export class PreviewPane {
     // -- character settings (physical appearance, voice description) --
     if (detail.type === 'character') {
       this.el.appendChild(this._renderCharacterSettings(detail, state.projectSlug!, locations))
+    }
+
+    // -- item settings (start location) --
+    if (detail.type === 'item') {
+      this.el.appendChild(this._renderItemSettings(detail, state.projectSlug!, locations))
     }
 
     // -- location settings (scene image selector) --
@@ -472,16 +477,27 @@ export class PreviewPane {
 
 
     // Start location
+    section.appendChild(this._renderStartLocationFields(detail, projectSlug, locations))
+
+    // Voice reference recording
+    section.appendChild(this._renderVoiceRecorder(detail.slug, projectSlug))
+
+    return section
+  }
+
+
+  private _renderStartLocationFields(detail: import('./api').EntityDetail, projectSlug: string, locations: import('./api').Entity[]): HTMLElement {
+    const wrap = document.createElement('div')
+
     const slHeading = document.createElement('div')
     slHeading.className = 'game-settings-heading'
     slHeading.textContent = 'Start Location'
-    section.appendChild(slHeading)
+    wrap.appendChild(slHeading)
 
     const startLocMeta = (detail.meta as Record<string, unknown>)?.['start_location'] as {location?: string; x?: number; y?: number} | undefined ?? {}
 
     const locRow = document.createElement('div')
     locRow.className = 'start-loc-row'
-
     const locSel = document.createElement('select')
     locSel.className = 'modal-select'
     const noneOpt = document.createElement('option')
@@ -496,14 +512,13 @@ export class PreviewPane {
       locSel.appendChild(opt)
     }
     locRow.appendChild(locSel)
-    section.appendChild(locRow)
+    wrap.appendChild(locRow)
 
     const xyRow = document.createElement('div')
     xyRow.className = 'start-loc-xy-row'
-
     const mkXY = (label: string, key: 'x' | 'y') => {
-      const wrap = document.createElement('div')
-      wrap.className = 'start-loc-xy-field'
+      const fieldWrap = document.createElement('div')
+      fieldWrap.className = 'start-loc-xy-field'
       const lbl = document.createElement('label')
       lbl.className = 'modal-field-label'
       lbl.textContent = label
@@ -512,17 +527,17 @@ export class PreviewPane {
       inp.className = 'modal-input start-loc-xy-input'
       inp.min = '0'; inp.max = '1'; inp.step = '0.01'
       inp.value = startLocMeta[key] !== undefined ? String(startLocMeta[key]) : '0.5'
-      wrap.appendChild(lbl)
-      wrap.appendChild(inp)
-      xyRow.appendChild(wrap)
+      fieldWrap.appendChild(lbl)
+      fieldWrap.appendChild(inp)
+      xyRow.appendChild(fieldWrap)
       return inp
     }
     const xInp = mkXY('X', 'x')
     const yInp = mkXY('Y', 'y')
-    section.appendChild(xyRow)
+    wrap.appendChild(xyRow)
 
     let _slTimer: ReturnType<typeof setTimeout> | null = null
-    const _saveStartLoc = () => {
+    const _save = () => {
       if (_slTimer) clearTimeout(_slTimer)
       _slTimer = setTimeout(async () => {
         const locVal = locSel.value
@@ -537,13 +552,16 @@ export class PreviewPane {
         } catch (e) { console.debug('[terrrence] start_location save error', e) }
       }, 800)
     }
-    locSel.onchange = _saveStartLoc
-    xInp.oninput = _saveStartLoc
-    yInp.oninput = _saveStartLoc
+    locSel.onchange = _save
+    xInp.oninput = _save
+    yInp.oninput = _save
+    return wrap
+  }
 
-    // Voice reference recording
-    section.appendChild(this._renderVoiceRecorder(detail.slug, projectSlug))
-
+  private _renderItemSettings(detail: import('./api').EntityDetail, projectSlug: string, locations: import('./api').Entity[]): HTMLElement {
+    const section = document.createElement('div')
+    section.className = 'game-settings'
+    section.appendChild(this._renderStartLocationFields(detail, projectSlug, locations))
     return section
   }
 

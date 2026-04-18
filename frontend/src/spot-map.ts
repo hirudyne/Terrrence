@@ -25,12 +25,20 @@ export async function showSpotMap(
     ...initialSpots.map(s => api.getEntity(projectSlug, s.slug)),
   ])
 
-  // Fetch characters with start_location matching this location
-  const allChars = await api.listEntities(projectSlug, 'character')
-  const charDetails: EntityDetail[] = await Promise.all(
-    allChars.map(c => api.getEntity(projectSlug, c.slug))
-  )
+  // Fetch characters and items with start_location matching this location
+  const [allChars, allItems] = await Promise.all([
+    api.listEntities(projectSlug, 'character'),
+    api.listEntities(projectSlug, 'item'),
+  ])
+  const [charDetails, itemDetails]: [EntityDetail[], EntityDetail[]] = await Promise.all([
+    Promise.all(allChars.map(c => api.getEntity(projectSlug, c.slug))),
+    Promise.all(allItems.map(i => api.getEntity(projectSlug, i.slug))),
+  ]) as [EntityDetail[], EntityDetail[]]
   const sceneChars = charDetails.filter(d => {
+    const sl = (d.meta as Record<string, unknown>)?.['start_location'] as StartLocation | undefined
+    return sl?.location === location.slug
+  })
+  const sceneItems = itemDetails.filter(d => {
     const sl = (d.meta as Record<string, unknown>)?.['start_location'] as StartLocation | undefined
     return sl?.location === location.slug
   })
@@ -67,8 +75,10 @@ export async function showSpotMap(
     update()
     toggleWrap.appendChild(btn)
   }
+  let showItems = true
   mkToggle('Spots', () => showSpots, () => { showSpots = !showSpots })
   mkToggle('Characters', () => showChars, () => { showChars = !showChars })
+  mkToggle('Items', () => showItems, () => { showItems = !showItems })
   hdr.appendChild(toggleWrap)
 
   const closeBtn = document.createElement('button')
@@ -129,6 +139,14 @@ export async function showSpotMap(
     const assets = await api.listEntityAssets(projectSlug, c.slug)
     const img = assets.find(a => a.mime.startsWith('image/'))
     charImageCache.set(c.slug, img ? api.assetFileUrl(projectSlug, img.id) : null)
+  }))
+
+  // Item image cache
+  const itemImageCache: Map<string, string | null> = new Map()
+  await Promise.all(sceneItems.map(async (item) => {
+    const assets = await api.listEntityAssets(projectSlug, item.slug)
+    const img = assets.find(a => a.mime.startsWith('image/'))
+    itemImageCache.set(item.slug, img ? api.assetFileUrl(projectSlug, img.id) : null)
   }))
 
   let _openPanel: string | null = null
@@ -284,6 +302,49 @@ export async function showSpotMap(
       }
     }
 
+    // -- items layer --
+    if (showItems) {
+      for (const item of sceneItems) {
+        const sl = (item.meta as Record<string, unknown>)?.['start_location'] as StartLocation | undefined
+        if (!sl) continue
+        const x = sl.x ?? 0.5
+        const y = sl.y ?? 0.5
+        const imgUrl = itemImageCache.get(item.slug) ?? null
+
+        const card = document.createElement('div')
+        card.className = 'item-card'
+        card.style.left = `${x * 100}%`
+        card.style.top = `${y * 100}%`
+        card.title = item.display_name
+        card.dataset.slug = item.slug
+        card.dataset.layer = 'item'
+        card.draggable = true
+
+        if (imgUrl) {
+          card.style.backgroundImage = `url(${imgUrl})`
+          card.style.backgroundSize = 'contain'
+          card.style.backgroundRepeat = 'no-repeat'
+          card.style.backgroundPosition = 'center'
+        } else {
+          const label = document.createElement('span')
+          label.className = 'item-card-label'
+          label.textContent = item.display_name
+          card.appendChild(label)
+        }
+
+        const nameTag = document.createElement('span')
+        nameTag.className = 'item-card-nametag'
+        nameTag.textContent = item.display_name
+        card.appendChild(nameTag)
+
+        card.ondragstart = (e) => {
+          e.dataTransfer!.setData('text/plain', `item:${item.slug}`)
+          e.dataTransfer!.effectAllowed = 'move'
+        }
+        canvas.appendChild(card)
+      }
+    }
+
     // -- characters layer --
     if (showChars) {
       for (const c of sceneChars) {
@@ -347,6 +408,19 @@ export async function showSpotMap(
         _renderCanvas()
         _renderTray()
       } catch (err) { console.debug('[terrrence] spot place error', err) }
+
+    } else if (raw.startsWith('item:')) {
+      const slug = raw.slice(5)
+      const item = sceneItems.find(i => i.slug === slug)
+      if (!item) return
+      const sl = (item.meta as Record<string, unknown>)?.['start_location'] as StartLocation | undefined
+      if (!sl) return
+      try {
+        const updated = { location: sl.location, x: nx, y: ny }
+        await api.updateEntityMeta(projectSlug, slug, { start_location: updated })
+        ;(item.meta as Record<string, unknown>)['start_location'] = updated
+        _renderCanvas()
+      } catch (err) { console.debug('[terrrence] item drag error', err) }
 
     } else if (raw.startsWith('char:')) {
       const slug = raw.slice(5)
