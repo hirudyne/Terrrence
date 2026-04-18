@@ -15,7 +15,7 @@ function deriveSlug(displayName: string, entityType?: string): string {
   return slug.slice(0, 64) || 'entity'
 }
 
-const ALL_TYPES = ['game', 'chapter', 'location', 'character', 'item', 'event', 'conversation'] as const
+const ALL_TYPES = ['game', 'chapter', 'location', 'character', 'item', 'event', 'conversation', 'spot'] as const
 const TYPE_PREFIX: Record<string, string> = {
   game:         'G',
   chapter:      '??',
@@ -24,8 +24,9 @@ const TYPE_PREFIX: Record<string, string> = {
   item:         '~~',
   event:        '!!',
   conversation: '“”',
+  spot:         '%%',
 }
-const CREATABLE_TYPES = ['chapter', 'location', 'character', 'item', 'event', 'conversation'] as const
+const CREATABLE_TYPES = ['chapter', 'location', 'character', 'item', 'event', 'conversation', 'spot'] as const
 
 // SVG icons
 const EYE_ICON = `<svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`
@@ -269,6 +270,7 @@ export class NavPane {
     const gameEntity  = this.entities.find(e => e.type === 'game')
     const chapters    = this.entities.filter(e => e.type === 'chapter')
     const locations   = this.entities.filter(e => e.type === 'location')
+    const spots       = this.entities.filter(e => e.type === 'spot')
     const items       = this.entities.filter(e => e.type === 'item')
     const characters  = this.entities.filter(e => e.type === 'character')
 
@@ -295,7 +297,10 @@ export class NavPane {
         content: () => {
           const ul = document.createElement('ul')
           ul.className = 'nav-tree-section-list'
-          for (const e of locations) ul.appendChild(this._entityItem(e))
+          for (const loc of locations) {
+            const locSpots = spots.filter(s => s.parent_slug === loc.slug)
+            ul.appendChild(this._locationGroup(loc, locSpots))
+          }
           return ul
         },
       },
@@ -504,6 +509,44 @@ export class NavPane {
     return li
   }
 
+
+  private _locationGroup(location: Entity, spots: Entity[]): HTMLElement {
+    const li = document.createElement('li')
+    li.className = 'nav-chapter-group'
+
+    const row = document.createElement('div')
+    row.className = 'nav-entity-item'
+    const state = getState()
+    if (location.slug === state.activeEntitySlug) row.classList.add('active')
+
+    const name = document.createElement('span')
+    name.className = 'nav-entity-name'
+    name.textContent = location.display_name
+    name.title = location.slug
+    name.onclick = () => setState({ activeEntitySlug: location.slug })
+    row.appendChild(name)
+
+    const actions = document.createElement('span')
+    actions.className = 'nav-entity-actions'
+    actions.appendChild(this._iconBtn('<svg viewBox="0 0 24 24"><path d="M3 7l6-3 6 3 6-3v13l-6 3-6-3-6 3V7z"/><line x1="9" y1="4" x2="9" y2="17"/><line x1="15" y1="7" x2="15" y2="20"/></svg>', 'Edit spot map', (e) => {
+      e.stopPropagation()
+      const ps = getState().projectSlug; if (!ps) return
+      import('./spot-map').then(m => m.showSpotMap(ps, location, spots, () => this.load(ps)))
+    }))
+    actions.appendChild(this._iconBtn(EYE_ICON, 'Open in preview', (e) => { e.stopPropagation(); setState({ previewEntitySlug: location.slug }) }))
+    actions.appendChild(this._iconBtn(TRASH_ICON, 'Delete', (e) => { e.stopPropagation(); this._confirmDelete(location) }, true))
+    row.appendChild(actions)
+    li.appendChild(row)
+
+    if (spots.length > 0) {
+      const spotList = document.createElement('ul')
+      spotList.className = 'nav-event-list'
+      for (const spot of spots) spotList.appendChild(this._entityItem(spot))
+      li.appendChild(spotList)
+    }
+    return li
+  }
+
   private _chapterGroup(chapter: Entity, events: Entity[]): HTMLElement {
     const li = document.createElement('li')
     li.className = 'nav-chapter-group'
@@ -654,6 +697,7 @@ export class NavPane {
     const hasGame = this.entities.some(e => e.type === 'game')
     const chapters = this.entities.filter(e => e.type === 'chapter')
     const characters = this.entities.filter(e => e.type === 'character')
+    const locations = this.entities.filter(e => e.type === 'location')
 
     const modal = this._modal('New entity', (form, close, err) => {
       // Type dropdown
@@ -726,6 +770,32 @@ export class NavPane {
       charRow.appendChild(charSelect)
       form.appendChild(charRow)
 
+      // Location selector - shown when type = spot
+      const locRow = document.createElement('div')
+      locRow.style.display = 'none'
+      const locRowLabel = document.createElement('label')
+      locRowLabel.className = 'modal-field-label'
+      locRowLabel.textContent = 'Parent location'
+      locRow.appendChild(locRowLabel)
+      const locSelect = document.createElement('select')
+      locSelect.className = 'modal-select'
+      if (locations.length === 0) {
+        const opt = document.createElement('option')
+        opt.textContent = 'No locations yet - create a location first'
+        opt.disabled = true
+        locSelect.appendChild(opt)
+      } else {
+        for (const lo of locations) {
+          const opt = document.createElement('option')
+          opt.value = lo.slug
+          opt.textContent = lo.display_name
+          if (lo.slug === state.activeEntitySlug) opt.selected = true
+          locSelect.appendChild(opt)
+        }
+      }
+      locRow.appendChild(locSelect)
+      form.appendChild(locRow)
+
       const showParentRow = (type: string) => {
         chapterRow.style.display = type === 'event' ? 'flex' : 'none'
         chapterRow.style.flexDirection = 'column'
@@ -733,6 +803,9 @@ export class NavPane {
         charRow.style.display = type === 'conversation' ? 'flex' : 'none'
         charRow.style.flexDirection = 'column'
         charRow.style.gap = '4px'
+        locRow.style.display = type === 'spot' ? 'flex' : 'none'
+        locRow.style.flexDirection = 'column'
+        locRow.style.gap = '4px'
       }
 
       typeSelect.onchange = () => showParentRow(typeSelect.value)
@@ -756,8 +829,10 @@ export class NavPane {
         if (!name) { err('Display name required.'); return }
         if (type === 'event' && chapters.length === 0) { err('Create a chapter first.'); return }
         if (type === 'conversation' && characters.length === 0) { err('Create a character first.'); return }
+        if (type === 'spot' && locations.length === 0) { err('Create a location first.'); return }
         const parentSlug = type === 'event' ? chapterSelect.value
           : type === 'conversation' ? charSelect.value
+          : type === 'spot' ? locSelect.value
           : undefined
         try {
           const entity = await api.createEntity(state.projectSlug!, { slug, display_name: name, type, parent_slug: parentSlug })

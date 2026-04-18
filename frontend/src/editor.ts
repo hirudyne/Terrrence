@@ -17,7 +17,7 @@ import { getState, setState } from './state'
 // @@display@@  ##display##  ~~display~~  ??slug??  !!trigger!!effect!!
 // ---------------------------------------------------------------------------
 
-const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?|\u201c\u201c[^\u201c\u201d]+\u201d\u201d)/g
+const TOKEN_RE = /(@@[^@]+@@|##[^#]+##|~~[^~]+~~|!!(?:[^!]|![^!])*!!|\?\?[^?]+\?\?|\u201c\u201c[^\u201c\u201d]+\u201d\u201d|%%[^%]+%%)/g
 
 // A token is "committed" when its closing delimiter has just been typed.
 // Returns { displayName, type } or null.
@@ -33,6 +33,7 @@ const itemMark      = Decoration.mark({ class: 'cm-token-item' })
 const eventMark     = Decoration.mark({ class: 'cm-token-event' })
 const chapterMark      = Decoration.mark({ class: 'cm-token-chapter' })
 const conversationMark = Decoration.mark({ class: 'cm-token-conversation' })
+const spotMark         = Decoration.mark({ class: 'cm-token-spot' })
 
 function markForToken(raw: string): Decoration {
   if (raw.startsWith('@@')) return locationMark
@@ -40,6 +41,7 @@ function markForToken(raw: string): Decoration {
   if (raw.startsWith('~~')) return itemMark
   if (raw.startsWith('??')) return chapterMark
   if (raw.startsWith('“')) return conversationMark
+  if (raw.startsWith('%')) return spotMark
   return eventMark
 }
 
@@ -76,6 +78,7 @@ const tokenHighlighter = ViewPlugin.fromClass(
             : raw.startsWith('~~') ? 'item'
             : raw.startsWith('??') ? 'chapter'
             : raw.startsWith('\u201c') ? 'conversation'
+            : raw.startsWith('%') ? 'spot'
             : 'event'
           const delimLen = 2
           const inner = raw.slice(delimLen, -delimLen).trim()
@@ -123,15 +126,15 @@ export async function refreshEntityCache(projectSlug: string) {
 
 function terrrenceComplete(context: CompletionContext): CompletionResult | null {
   // Match after opening delimiter: @@ ## ~~ ??
-  const word = context.matchBefore(/(@@|##|~~|\?\?|\u201c\u201c)[^\u201c\u201d]*/) 
+  const word = context.matchBefore(/(@@|##|~~|\?\?|\u201c\u201c|%%)[^\u201c\u201d%]*/) 
   if (!word || (word.from === word.to && !context.explicit)) return null
 
-  const prefix = word.text.startsWith('\u201c\u201c') ? '\u201c\u201c' : word.text.startsWith('\u201c') ? '\u201c\u201c' : word.text.slice(0, 2)
+  const prefix = word.text.startsWith('\u201c\u201c') ? '\u201c\u201c' : word.text.startsWith('\u201c') ? '\u201c\u201c' : word.text.startsWith('%%') ? '%%' : word.text.slice(0, 2)
   const typeMap: Record<string, string> = {
-    '@@': 'location', '##': 'character', '~~': 'item', '??': 'chapter', '\u201c': 'conversation',
+    '@@': 'location', '##': 'character', '~~': 'item', '??': 'chapter', '\u201c': 'conversation', '%%': 'spot',
   }
   const closing: Record<string, string> = {
-    '@@': '@@', '##': '##', '~~': '~~', '??': '??', '\u201c': '\u201d',
+    '@@': '@@', '##': '##', '~~': '~~', '??': '??', '\u201c': '\u201d', '%%': '%%',
   }
   const targetType = typeMap[prefix]
   if (!targetType) return null
@@ -184,9 +187,10 @@ export function getOrCreateEditor(
   // Wire token-complete callback into the shared highlighter slot
   _onTokenComplete = (displayName: string, type: string) => {
     const nav = (window as any)._terrrenceNav
-    const parentSlug = (type === 'event' || type === 'conversation') ? entitySlug : undefined
+    const parentSlug = (type === 'event' || type === 'conversation' || type === 'spot') ? entitySlug : undefined
     if (type === 'event' && entityType !== 'chapter') return
     if (type === 'conversation' && entityType !== 'character') return
+    if (type === 'spot' && entityType !== 'location') return
     console.debug('[terrrence] ensureEntity call', { project, displayName, type, parentSlug })
     api.ensureEntity(project, displayName, type, parentSlug)
       .then(entity => {
@@ -253,8 +257,8 @@ export function getOrCreateEditor(
         // Set preview to the token nearest the cursor
         const doc = view.state.doc.toString()
         const cursor = view.state.selection.main.head
-        const tokenRe = /(@@([^@]+)@@|##([^#]+)##|~~([^~]+)~~|\?\?([^?]+)\?\?|\u201c\u201c([^\u201c\u201d]+)\u201d\u201d)/g
-        const typeMap: Record<number, string> = { 2: 'location', 3: 'character', 4: 'item', 5: 'chapter', 6: 'conversation' }
+        const tokenRe = /(@@([^@]+)@@|##([^#]+)##|~~([^~]+)~~|\?\?([^?]+)\?\?|\u201c\u201c([^\u201c\u201d]+)\u201d\u201d|%%(([^%]+))%%)/g
+        const typeMap: Record<number, string> = { 2: 'location', 3: 'character', 4: 'item', 5: 'chapter', 6: 'conversation', 8: 'spot' }
         let best: { displayName: string; type: string; dist: number } | null = null
         let m: RegExpExecArray | null
         while ((m = tokenRe.exec(doc)) !== null) {
@@ -262,14 +266,14 @@ export function getOrCreateEditor(
           const end = m.index + m[0].length
           const dist = cursor >= start && cursor <= end ? 0 : Math.min(Math.abs(cursor - start), Math.abs(cursor - end))
           if (best === null || dist < best.dist) {
-            const grpIdx = [2,3,4,5,6].find(i => m![i] !== undefined)
+            const grpIdx = [2,3,4,5,6,8].find(i => m![i] !== undefined)
             if (grpIdx !== undefined) {
               best = { displayName: m[grpIdx].trim(), type: typeMap[grpIdx], dist }
             }
           }
         }
         if (best && best.dist < 200) {
-          const parentSlug = (best.type === 'event' || best.type === 'conversation') ? entitySlug : undefined
+          const parentSlug = (best.type === 'event' || best.type === 'conversation' || best.type === 'spot') ? entitySlug : undefined
           api.ensureEntity(project, best.displayName, best.type, parentSlug)
             .then(entity => { if (!entity.blocked && entity.slug) setState({ previewEntitySlug: entity.slug }) })
             .catch(() => {})
@@ -328,6 +332,8 @@ export function getOrCreateEditor(
       '&.cm-pending-event .cm-cursor': { borderLeftColor: '#e9c46a !important', borderLeftWidth: '3px !important' },
       '&.cm-pending-chapter .cm-cursor': { borderLeftColor: '#c77dff !important', borderLeftWidth: '3px !important' },
       '&.cm-pending-conversation .cm-cursor': { borderLeftColor: '#ff9eb5 !important', borderLeftWidth: '3px !important' },
+      '.cm-token-spot': { color: '#b5e48c', fontWeight: 'bold' },
+      '&.cm-pending-spot .cm-cursor': { borderLeftColor: '#b5e48c !important', borderLeftWidth: '3px !important' },
     }),
     EditorView.updateListener.of((update: ViewUpdate) => {
       if (!update.docChanged) return

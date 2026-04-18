@@ -162,6 +162,11 @@ export class PreviewPane {
       this.el.appendChild(this._renderCharacterSettings(detail, state.projectSlug!))
     }
 
+    // -- location settings (scene image selector) --
+    if (detail.type === 'location') {
+      this.el.appendChild(this._renderLocationSettings(detail, assets, state.projectSlug!))
+    }
+
     // -- tags --
     const tagSection = document.createElement('div')
     tagSection.className = 'preview-tags'
@@ -178,7 +183,7 @@ export class PreviewPane {
       blSection.appendChild(blHeading)
       const blList = document.createElement('div')
       blList.className = 'preview-backlinks-list'
-      const TYPE_PREFIX_BL: Record<string,string> = { location:'@@', character:'##', item:'~~', chapter:'??', event:'!!', conversation:'\u201c\u201d', game:'G' }
+      const TYPE_PREFIX_BL: Record<string,string> = { location:'@@', character:'##', item:'~~', chapter:'??', event:'!!', conversation:'\u201c\u201d', game:'G', spot:'%%' }
       for (const bl of backlinks) {
         const chip = document.createElement('button')
         chip.className = 'backlink-chip'
@@ -355,6 +360,60 @@ export class PreviewPane {
 
     section.appendChild(input)
     section.appendChild(counter)
+    return section
+  }
+
+
+  private _renderLocationSettings(detail: EntityDetail, assets: Asset[], projectSlug: string): HTMLElement {
+    const section = document.createElement('div')
+    section.className = 'game-settings'
+
+    const heading = document.createElement('div')
+    heading.className = 'preview-section-heading'
+    heading.textContent = 'Location Settings'
+    section.appendChild(heading)
+
+    const label = document.createElement('label')
+    label.className = 'modal-field-label'
+    label.textContent = 'Scene image'
+    section.appendChild(label)
+
+    const imageAssets = assets.filter(a => a.mime.startsWith('image/'))
+    const currentId = (detail.meta as Record<string, unknown>)?.['scene_image'] as number | null ?? null
+
+    const select = document.createElement('select')
+    select.className = 'modal-select'
+
+    const noneOpt = document.createElement('option')
+    noneOpt.value = ''
+    noneOpt.textContent = '(none)'
+    select.appendChild(noneOpt)
+
+    for (const a of imageAssets) {
+      const opt = document.createElement('option')
+      opt.value = String(a.id)
+      opt.textContent = a.rel_path.split('/').pop() ?? a.rel_path
+      if (a.id === currentId) opt.selected = true
+      select.appendChild(opt)
+    }
+    if (imageAssets.length === 0) {
+      const opt = document.createElement('option')
+      opt.textContent = 'No image assets yet'
+      opt.disabled = true
+      select.appendChild(opt)
+    }
+
+    let _saveTimer: ReturnType<typeof setTimeout> | null = null
+    select.onchange = () => {
+      if (_saveTimer) clearTimeout(_saveTimer)
+      _saveTimer = setTimeout(async () => {
+        const val = select.value === '' ? '' : Number(select.value)
+        try {
+          await api.updateEntityMeta(projectSlug, detail.slug, { scene_image: val === '' ? '' : val })
+        } catch (e) { console.debug('[terrrence] scene_image save error', e) }
+      }, 400)
+    }
+    section.appendChild(select)
     return section
   }
 
