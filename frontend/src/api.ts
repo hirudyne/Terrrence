@@ -115,10 +115,10 @@ export const api = {
     req<{ asset_id: number; filename: string }>('POST', `/projects/${project}/entities/${entity}/enhance-line?line_id=${encodeURIComponent(lineId)}&line_index=${lineIndex}&asset_id=${assetId}`),
   getBacklinks: (project: string, slug: string) =>
     req<{slug:string;type:string;display_name:string;occurrences:number}[]>('GET', `/projects/${project}/entities/${slug}/backlinks`),
-  generateFacing: (project: string, entity: string, facing: string) =>
-    req<Asset>('POST', `/projects/${project}/entities/${entity}/generate-facing?facing=${facing}`),
-  generateWalkFrame: (project: string, entity: string, facing: string, frame: number) =>
-    req<Asset>('POST', `/projects/${project}/entities/${entity}/generate-walk-frame?facing=${facing}&frame=${frame}`),
+  generatePart: (project: string, entity: string, partType: string) =>
+    req<Asset & { skin_tone?: string }>('POST', `/projects/${project}/entities/${entity}/generate-part?part_type=${partType}`),
+  renderWalk: (project: string, entity: string, gait: string) =>
+    req<Asset>('POST', `/projects/${project}/entities/${entity}/render-walk?gait=${gait}`),
   renameEntity: (project: string, slug: string, display_name: string) =>
     req<Entity & { slug: string }>('POST', `/projects/${project}/entities/${slug}/rename`, { display_name }),
 }

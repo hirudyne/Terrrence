@@ -22,6 +22,7 @@ RUN pip install --break-system-packages \
     python-frontmatter \
     pyyaml \
     argon2-cffi \
+    Pillow \
     python-multipart \
     httpx \
     psycopg2-binary
