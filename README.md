@@ -20,7 +20,7 @@ Entities in a game world are created and cross-referenced by typing them inline 
 | `""Display Name""` | Conversation | pink |
 | `%%Display Name%%` | Spot | green |
 
-Typing `##Sholver##` and pressing Tab creates a stub character entity if one does not exist, opens it in the preview pane, and adds it to the reference graph. Existing entities autocomplete as you type. The reference graph is rebuilt on every save.
+Typing `##Derek##` and pressing Tab creates a stub character entity if one does not exist, opens it in the preview pane, and adds it to the reference graph. Existing entities autocomplete as you type. The reference graph is rebuilt on every save.
 
 Renaming an entity cascades the new display name into all inline token references across every file in the project.
 
