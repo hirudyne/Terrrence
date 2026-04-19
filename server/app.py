@@ -9,7 +9,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("terrrence")
 import secrets
-import sqlite3
+import psycopg2
+import psycopg2.extras
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -18,7 +19,6 @@ from argon2.exceptions import VerifyMismatchError
 from fastapi import Cookie, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
-DB_PATH     = Path(os.environ.get("TERRRENCE_DB",     "/workspace/data/terrrence.db"))
 COOKIE_NAME = "terrrence_session"
 
 def _load_secret(key: str) -> str | None:
@@ -40,17 +40,47 @@ app = FastAPI(title="Terrrence", version="0.0.1")
 # DB helpers
 # ---------------------------------------------------------------------------
 
+def _pg_connect():
+    return psycopg2.connect(
+        host=_load_secret("PG_HOST") or "dbase",
+        port=int(_load_secret("PG_PORT") or 5432),
+        dbname=_load_secret("PG_DBNAME") or "terrrence_db",
+        user=_load_secret("PG_USER"),
+        password=_load_secret("PG_PASSWORD"),
+        cursor_factory=psycopg2.extras.RealDictCursor,
+    )
+
+class _Conn:
+    def __init__(self, pg_conn):
+        self._conn = pg_conn
+
+    def execute(self, sql: str, params=None):
+        cur = self._conn.cursor()
+        cur.execute(sql, params)
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+
 @contextmanager
 def db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
+    conn = _Conn(_pg_connect())
     try:
         yield conn
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
+
 
 
 
@@ -71,18 +101,18 @@ def _resolve_session(session_id: str | None):
             SELECT s.api_key_id, k.label
             FROM sessions s
             JOIN api_keys k ON k.id = s.api_key_id
-            WHERE s.session_id = ?
+            WHERE s.session_id = %s
             """,
             (session_id,),
         ).fetchone()
         if not row:
             return None
         conn.execute(
-            "UPDATE sessions SET last_seen_at = datetime('now') WHERE session_id = ?",
+            "UPDATE sessions SET last_seen_at = NOW() WHERE session_id = %s",
             (session_id,),
         )
         conn.execute(
-            "UPDATE api_keys SET last_seen_at = datetime('now') WHERE id = ?",
+            "UPDATE api_keys SET last_seen_at = NOW() WHERE id = %s",
             (row["api_key_id"],),
         )
         return row["api_key_id"], row["label"]
@@ -151,7 +181,7 @@ def login(body: LoginBody, response: Response):
     session_id = _new_session_id()
     with db() as conn:
         conn.execute(
-            "INSERT INTO sessions (session_id, api_key_id) VALUES (?, ?)",
+            "INSERT INTO sessions (session_id, api_key_id) VALUES (%s, %s)",
             (session_id, matched_id),
         )
 
@@ -163,7 +193,7 @@ def login(body: LoginBody, response: Response):
 def logout(response: Response, session: str | None = Cookie(default=None, alias=COOKIE_NAME)):
     if session:
         with db() as conn:
-            conn.execute("DELETE FROM sessions WHERE session_id = ?", (session,))
+            conn.execute("DELETE FROM sessions WHERE session_id = %s", (session,))
     response.delete_cookie(COOKIE_NAME, path="/")
     return {"ok": True}
 
@@ -218,13 +248,13 @@ def _ensure_game_entity(project_slug: str, project_id: int, display_name: str) -
     """Create the game entity for a project if it does not exist."""
     with db() as conn:
         existing = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND type = 'game'",
+            "SELECT id FROM entities WHERE project_id = %s AND type = 'game'",
             (project_id,),
         ).fetchone()
         if existing:
             return
         conn.execute(
-            "INSERT INTO entities (project_id, slug, type, display_name) VALUES (?, ?, 'game', ?)",
+            "INSERT INTO entities (project_id, slug, type, display_name) VALUES (%s, %s, 'game', %s)",
             (project_id, "game", display_name),
         )
     _write_entity_file(project_slug, "game", display_name, "game", "")
@@ -241,15 +271,15 @@ def create_project(body: CreateProjectBody, session: str | None = Cookie(default
     if not _slug_valid(body.slug):
         raise HTTPException(status_code=400, detail="invalid slug")
     with db() as conn:
-        existing = conn.execute("SELECT id FROM projects WHERE slug = ?", (body.slug,)).fetchone()
+        existing = conn.execute("SELECT id FROM projects WHERE slug = %s", (body.slug,)).fetchone()
         if existing:
             raise HTTPException(status_code=409, detail="slug taken")
         conn.execute(
-            "INSERT INTO projects (slug, display_name, owner_key_id) VALUES (?, ?, ?)",
+            "INSERT INTO projects (slug, display_name, owner_key_id) VALUES (%s, %s, %s)",
             (body.slug, body.display_name.strip(), api_key_id),
         )
     with db() as conn:
-        project_row = conn.execute("SELECT id FROM projects WHERE slug = ?", (body.slug,)).fetchone()
+        project_row = conn.execute("SELECT id FROM projects WHERE slug = %s", (body.slug,)).fetchone()
         project_id = project_row["id"]
     _bootstrap_project_dir(body.slug)
     _ensure_game_entity(body.slug, project_id, body.display_name.strip())
@@ -264,12 +294,12 @@ def list_projects(session: str | None = Cookie(default=None, alias=COOKIE_NAME))
             """
             SELECT p.slug, p.display_name, p.owner_key_id
             FROM projects p
-            WHERE p.owner_key_id = ?
+            WHERE p.owner_key_id = %s
             UNION
             SELECT p.slug, p.display_name, p.owner_key_id
             FROM projects p
             JOIN project_shares ps ON ps.project_id = p.id
-            WHERE ps.api_key_id = ?
+            WHERE ps.api_key_id = %s
             """,
             (api_key_id, api_key_id),
         ).fetchall()
@@ -285,24 +315,24 @@ def share_project(slug: str, body: ShareProjectBody, session: str | None = Cooki
     api_key_id, _ = _require_session(session)
     with db() as conn:
         project = conn.execute(
-            "SELECT id, owner_key_id FROM projects WHERE slug = ?", (slug,)
+            "SELECT id, owner_key_id FROM projects WHERE slug = %s", (slug,)
         ).fetchone()
         if not project:
             raise HTTPException(status_code=404, detail="project not found")
         if project["owner_key_id"] != api_key_id:
             raise HTTPException(status_code=403, detail="not owner")
         target = conn.execute(
-            "SELECT id FROM api_keys WHERE label = ?", (body.api_key_label,)
+            "SELECT id FROM api_keys WHERE label = %s", (body.api_key_label,)
         ).fetchone()
         if not target:
             raise HTTPException(status_code=404, detail="target key not found")
         existing = conn.execute(
-            "SELECT 1 FROM project_shares WHERE project_id = ? AND api_key_id = ?",
+            "SELECT 1 FROM project_shares WHERE project_id = %s AND api_key_id = %s",
             (project["id"], target["id"]),
         ).fetchone()
         if not existing:
             conn.execute(
-                "INSERT INTO project_shares (project_id, api_key_id) VALUES (?, ?)",
+                "INSERT INTO project_shares (project_id, api_key_id) VALUES (%s, %s)",
                 (project["id"], target["id"]),
             )
     return {"ok": True}
@@ -320,7 +350,7 @@ REF_PATTERNS = [
     (re.compile(r'##([^#]+)##'),             "character"),
     (re.compile(r'~~([^~]+)~~'),             "item"),
     (re.compile(r'!!([^!]+)!!([^!]+)!!'),    "event"),
-    (re.compile(r'\?\?([^?]+)\?\?'),           "chapter"),
+    (re.compile(r'\?\?([^%s]+)\?\?'),           "chapter"),
     (re.compile(r'\u201c\u201c([^\u201c\u201d]+)\u201d\u201d'), "conversation"),
     (re.compile(r'%%([^%]+)%%'),             "spot"),
 ]
@@ -331,12 +361,12 @@ def _project_for_session(slug: str, api_key_id: int):
         row = conn.execute(
             """
             SELECT p.id, p.owner_key_id FROM projects p
-            WHERE p.slug = ?
+            WHERE p.slug = %s
             AND (
-                p.owner_key_id = ?
+                p.owner_key_id = %s
                 OR EXISTS (
                     SELECT 1 FROM project_shares ps
-                    WHERE ps.project_id = p.id AND ps.api_key_id = ?
+                    WHERE ps.project_id = p.id AND ps.api_key_id = %s
                 )
             )
             """,
@@ -398,11 +428,11 @@ def _rebuild_refs(project_id: int, entity_id: int, body_text: str,
     new_stubs: list[str] = []
 
     with db() as conn:
-        conn.execute("DELETE FROM entity_refs WHERE src_entity_id = ?", (entity_id,))
+        conn.execute("DELETE FROM entity_refs WHERE src_entity_id = %s", (entity_id,))
         counts: dict[tuple, int] = {}
         for slug, ref_type, display_name_ref in refs:
             target = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+                "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
                 (project_id, slug),
             ).fetchone()
             if not target and project_slug:
@@ -413,7 +443,7 @@ def _rebuild_refs(project_id: int, entity_id: int, body_text: str,
                 parent_id = None
                 if ref_type == "chapter":
                     game_row = conn.execute(
-                        "SELECT id FROM entities WHERE project_id = ? AND type = 'game'",
+                        "SELECT id FROM entities WHERE project_id = %s AND type = 'game'",
                         (project_id,),
                     ).fetchone()
                     if game_row:
@@ -421,11 +451,11 @@ def _rebuild_refs(project_id: int, entity_id: int, body_text: str,
                     else:
                         continue
                 cur = conn.execute(
-                    "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (?,?,?,?,?)",
+                    "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (%s,%s,%s,%s,%s) RETURNING id",
                     (project_id, slug, ref_type, display_name_ref, parent_id),
                 )
-                stub_id = cur.lastrowid
-                target = conn.execute("SELECT id FROM entities WHERE id=?", (stub_id,)).fetchone()
+                stub_id = cur.fetchone()["id"]
+                target = conn.execute("SELECT id FROM entities WHERE id=%s", (stub_id,)).fetchone()
                 new_stubs.append(slug)
                 _write_entity_file(project_slug, slug, display_name_ref, ref_type, "")
             if target:
@@ -435,7 +465,7 @@ def _rebuild_refs(project_id: int, entity_id: int, body_text: str,
             conn.execute(
                 """
                 INSERT INTO entity_refs (src_entity_id, dst_entity_id, occurrences)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
                 ON CONFLICT(src_entity_id, dst_entity_id)
                 DO UPDATE SET occurrences = excluded.occurrences
                 """,
@@ -468,7 +498,7 @@ def create_entity(
     if body.type == "game":
         with db() as conn:
             existing_game = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND type = 'game'",
+                "SELECT id FROM entities WHERE project_id = %s AND type = 'game'",
                 (project["id"],),
             ).fetchone()
             if existing_game:
@@ -478,7 +508,7 @@ def create_entity(
     if body.type == "chapter":
         with db() as conn:
             game_row = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND type = 'game'",
+                "SELECT id FROM entities WHERE project_id = %s AND type = 'game'",
                 (project["id"],),
             ).fetchone()
             if not game_row:
@@ -489,7 +519,7 @@ def create_entity(
             raise HTTPException(status_code=400, detail="spots require a parent location slug")
         with db() as conn:
             parent_row = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND slug = ? AND type = 'location'",
+                "SELECT id FROM entities WHERE project_id = %s AND slug = %s AND type = 'location'",
                 (project["id"], body.parent_slug),
             ).fetchone()
             if not parent_row:
@@ -498,7 +528,7 @@ def create_entity(
     elif body.parent_slug:
         with db() as conn:
             parent_row = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+                "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
                 (project["id"], body.parent_slug),
             ).fetchone()
             if not parent_row:
@@ -506,16 +536,16 @@ def create_entity(
             parent_id = parent_row["id"]
     with db() as conn:
         existing = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], body.slug),
         ).fetchone()
         if existing:
             raise HTTPException(status_code=409, detail="slug taken")
         cur = conn.execute(
-            "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (%s, %s, %s, %s, %s) RETURNING id",
             (project["id"], body.slug, body.type, body.display_name.strip(), parent_id),
         )
-        entity_id = cur.lastrowid
+        entity_id = cur.fetchone()["id"]
     _write_entity_file(project_slug, body.slug, body.display_name.strip(), body.type, body.body)
     _rebuild_refs(project["id"], entity_id, body.body,
                   entity_type=body.type, project_slug=project_slug)
@@ -532,14 +562,14 @@ def delete_entity(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         entity = conn.execute(
-            "SELECT id, type FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id, type FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not entity:
             raise HTTPException(status_code=404, detail="entity not found")
         if entity["type"] == "game":
             raise HTTPException(status_code=403, detail="the game entity cannot be deleted")
-        conn.execute("DELETE FROM entities WHERE id = ?", (entity["id"],))
+        conn.execute("DELETE FROM entities WHERE id = %s", (entity["id"],))
     entity_path = _entity_path(project_slug, entity_slug)
     if entity_path.exists():
         entity_path.unlink()
@@ -569,7 +599,7 @@ def rename_entity(
 
     with db() as conn:
         entity = conn.execute(
-            "SELECT id, type, display_name FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id, type, display_name FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not entity:
@@ -586,7 +616,7 @@ def rename_entity(
         # Check for collision
         with db() as conn:
             existing = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+                "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
                 (project["id"], new_slug),
             ).fetchone()
             if existing:
@@ -617,13 +647,13 @@ def rename_entity(
         # Update DB: entity slug and display_name
         with db() as conn:
             conn.execute(
-                "UPDATE entities SET slug = ?, display_name = ? WHERE id = ?",
+                "UPDATE entities SET slug = %s, display_name = %s WHERE id = %s",
                 (new_slug, new_display_name, entity["id"]),
             )
             # Update parent_slug references in DB (children of this entity)
             conn.execute(
-                "UPDATE entities SET parent_id = (SELECT id FROM entities WHERE project_id = ? AND slug = ?) "
-                "WHERE parent_id = ?",
+                "UPDATE entities SET parent_id = (SELECT id FROM entities WHERE project_id = %s AND slug = %s) "
+                "WHERE parent_id = %s",
                 (project["id"], new_slug, entity["id"]),
             )
 
@@ -692,7 +722,7 @@ def rename_entity(
         # No slug change: just update display_name in DB
         with db() as conn:
             conn.execute(
-                "UPDATE entities SET display_name = ? WHERE id = ?",
+                "UPDATE entities SET display_name = %s WHERE id = %s",
                 (new_display_name, entity["id"]),
             )
 
@@ -749,7 +779,7 @@ def list_entities(
                           p.slug AS parent_slug, e.updated_at
                    FROM entities e
                    LEFT JOIN entities p ON p.id = e.parent_id
-                   WHERE e.project_id = ? AND e.type = ?""",
+                   WHERE e.project_id = %s AND e.type = %s""",
                 (project["id"], type),
             ).fetchall()
         else:
@@ -758,7 +788,7 @@ def list_entities(
                           p.slug AS parent_slug, e.updated_at
                    FROM entities e
                    LEFT JOIN entities p ON p.id = e.parent_id
-                   WHERE e.project_id = ?""",
+                   WHERE e.project_id = %s""",
                 (project["id"],),
             ).fetchall()
     return [{"slug": r["slug"], "type": r["type"], "display_name": r["display_name"], "parent_slug": r["parent_slug"], "updated_at": r["updated_at"]} for r in rows]
@@ -814,7 +844,7 @@ def ensure_entity(
         raise HTTPException(status_code=400, detail="could not derive valid slug")
     with db() as conn:
         existing = conn.execute(
-            "SELECT slug, type, display_name, parent_id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT slug, type, display_name, parent_id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], slug),
         ).fetchone()
         if existing:
@@ -823,7 +853,7 @@ def ensure_entity(
         parent_id = None
         if body.type == "chapter":
             game_row = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND type = 'game'",
+                "SELECT id FROM entities WHERE project_id = %s AND type = 'game'",
                 (project["id"],),
             ).fetchone()
             if game_row:
@@ -832,7 +862,7 @@ def ensure_entity(
             if not body.parent_slug:
                 return {"slug": None, "type": "event", "display_name": display_name, "created": False, "blocked": True}
             parent_row = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND slug = ? AND type = 'chapter'",
+                "SELECT id FROM entities WHERE project_id = %s AND slug = %s AND type = 'chapter'",
                 (project["id"], body.parent_slug),
             ).fetchone()
             if not parent_row:
@@ -842,7 +872,7 @@ def ensure_entity(
             if not body.parent_slug:
                 return {"slug": None, "type": "conversation", "display_name": display_name, "created": False, "blocked": True}
             parent_row = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND slug = ? AND type = 'character'",
+                "SELECT id FROM entities WHERE project_id = %s AND slug = %s AND type = 'character'",
                 (project["id"], body.parent_slug),
             ).fetchone()
             if not parent_row:
@@ -852,7 +882,7 @@ def ensure_entity(
             if not body.parent_slug:
                 return {"slug": None, "type": "spot", "display_name": display_name, "created": False, "blocked": True}
             parent_row = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND slug = ? AND type = 'location'",
+                "SELECT id FROM entities WHERE project_id = %s AND slug = %s AND type = 'location'",
                 (project["id"], body.parent_slug),
             ).fetchone()
             if not parent_row:
@@ -860,16 +890,16 @@ def ensure_entity(
             parent_id = parent_row["id"]
         elif body.parent_slug:
             parent_row = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+                "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
                 (project["id"], body.parent_slug),
             ).fetchone()
             if parent_row:
                 parent_id = parent_row["id"]
         cur = conn.execute(
-            "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO entities (project_id, slug, type, display_name, parent_id) VALUES (%s, %s, %s, %s, %s) RETURNING id",
             (project["id"], slug, body.type, display_name, parent_id),
         )
-        entity_id = cur.lastrowid
+        entity_id = cur.fetchone()["id"]
     _write_entity_file(project_slug, slug, display_name, body.type, "")
     return {"slug": slug, "type": body.type, "display_name": display_name, "created": True}
 
@@ -885,7 +915,7 @@ def get_backlinks(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         target = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not target:
@@ -895,7 +925,7 @@ def get_backlinks(
             SELECT e.slug, e.type, e.display_name, er.occurrences
             FROM entity_refs er
             JOIN entities e ON e.id = er.src_entity_id
-            WHERE er.dst_entity_id = ?
+            WHERE er.dst_entity_id = %s
             ORDER BY e.type, e.display_name
             """,
             (target["id"],),
@@ -914,7 +944,7 @@ def update_entity(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         entity = conn.execute(
-            "SELECT id, type, display_name FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id, type, display_name FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not entity:
@@ -944,7 +974,7 @@ def update_entity(
 
     with db() as conn:
         conn.execute(
-            "UPDATE entities SET display_name = ? WHERE id = ?",
+            "UPDATE entities SET display_name = %s WHERE id = %s",
             (new_display_name, entity["id"]),
         )
     _rebuild_refs(project["id"], entity["id"], new_body,
@@ -1170,7 +1200,7 @@ def list_tags(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         rows = conn.execute(
-            "SELECT id, name FROM tags WHERE project_id = ? ORDER BY name",
+            "SELECT id, name FROM tags WHERE project_id = %s ORDER BY name",
             (project["id"],),
         ).fetchall()
     return [{"id": r["id"], "name": r["name"]} for r in rows]
@@ -1186,7 +1216,7 @@ def list_entity_tags(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         entity = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not entity:
@@ -1194,7 +1224,7 @@ def list_entity_tags(
         rows = conn.execute(
             """SELECT t.id, t.name FROM tags t
                JOIN entity_tags et ON et.tag_id = t.id
-               WHERE et.entity_id = ? ORDER BY t.name""",
+               WHERE et.entity_id = %s ORDER BY t.name""",
             (entity["id"],),
         ).fetchall()
     return [{"id": r["id"], "name": r["name"]} for r in rows]
@@ -1218,22 +1248,22 @@ def add_entity_tag(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         entity = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not entity:
             raise HTTPException(status_code=404, detail="entity not found")
         # upsert tag
         conn.execute(
-            "INSERT OR IGNORE INTO tags (project_id, name) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO tags (project_id, name) VALUES (%s, %s)",
             (project["id"], name),
         )
         tag = conn.execute(
-            "SELECT id FROM tags WHERE project_id = ? AND name = ?",
+            "SELECT id FROM tags WHERE project_id = %s AND name = %s",
             (project["id"], name),
         ).fetchone()
         conn.execute(
-            "INSERT OR IGNORE INTO entity_tags (entity_id, tag_id) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO entity_tags (entity_id, tag_id) VALUES (%s, %s)",
             (entity["id"], tag["id"]),
         )
     return {"id": tag["id"], "name": name}
@@ -1250,18 +1280,18 @@ def remove_entity_tag(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         entity = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not entity:
             raise HTTPException(status_code=404, detail="entity not found")
         tag = conn.execute(
-            "SELECT id FROM tags WHERE project_id = ? AND name = ?",
+            "SELECT id FROM tags WHERE project_id = %s AND name = %s",
             (project["id"], tag_name.strip().lower()),
         ).fetchone()
         if tag:
             conn.execute(
-                "DELETE FROM entity_tags WHERE entity_id = ? AND tag_id = ?",
+                "DELETE FROM entity_tags WHERE entity_id = %s AND tag_id = %s",
                 (entity["id"], tag["id"]),
             )
 
@@ -1303,21 +1333,21 @@ async def upload_asset(
 
     with db() as conn:
         existing = conn.execute(
-            "SELECT id FROM assets WHERE project_id = ? AND rel_path = ?",
+            "SELECT id FROM assets WHERE project_id = %s AND rel_path = %s",
             (project["id"], rel_path),
         ).fetchone()
         if existing:
             conn.execute(
-                "UPDATE assets SET sha256 = ?, bytes = ?, mime = ? WHERE id = ?",
+                "UPDATE assets SET sha256 = %s, bytes = %s, mime = %s WHERE id = %s",
                 (sha256, len(data), mime, existing["id"]),
             )
             asset_id = existing["id"]
         else:
             cur = conn.execute(
-                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256) VALUES (?, ?, ?, ?, ?)",
-                (project["id"], rel_path, mime, len(data), sha256),
+                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256, source) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (project["id"], rel_path, mime, len(data), sha256, 'uploaded'),
             )
-            asset_id = cur.lastrowid
+            asset_id = cur.fetchone()["id"]
 
     return {"id": asset_id, "rel_path": rel_path, "mime": mime, "bytes": len(data), "sha256": sha256}
 
@@ -1331,7 +1361,7 @@ def list_assets(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         rows = conn.execute(
-            "SELECT id, rel_path, mime, bytes FROM assets WHERE project_id = ?",
+            "SELECT id, rel_path, mime, bytes FROM assets WHERE project_id = %s",
             (project["id"],),
         ).fetchall()
     return [{"id": r["id"], "rel_path": r["rel_path"], "mime": r["mime"], "bytes": r["bytes"]} for r in rows]
@@ -1347,7 +1377,7 @@ def get_asset_file(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         row = conn.execute(
-            "SELECT rel_path, mime FROM assets WHERE id = ? AND project_id = ?",
+            "SELECT rel_path, mime FROM assets WHERE id = %s AND project_id = %s",
             (asset_id, project["id"]),
         ).fetchone()
         if not row:
@@ -1368,7 +1398,7 @@ def list_entity_assets(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         entity = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not entity:
@@ -1376,7 +1406,7 @@ def list_entity_assets(
         rows = conn.execute(
             """SELECT a.id, a.rel_path, a.mime, a.bytes, ae.role
                FROM assets a JOIN asset_entities ae ON ae.asset_id = a.id
-               WHERE ae.entity_id = ?""",
+               WHERE ae.entity_id = %s""",
             (entity["id"],),
         ).fetchall()
     return [{"id": r["id"], "rel_path": r["rel_path"], "mime": r["mime"],
@@ -1399,19 +1429,19 @@ def associate_asset(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         entity = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not entity:
             raise HTTPException(status_code=404, detail="entity not found")
         asset = conn.execute(
-            "SELECT id FROM assets WHERE id = ? AND project_id = ?",
+            "SELECT id FROM assets WHERE id = %s AND project_id = %s",
             (body.asset_id, project["id"]),
         ).fetchone()
         if not asset:
             raise HTTPException(status_code=404, detail="asset not found")
         conn.execute(
-            """INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (?, ?, ?)
+            """INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (%s, %s, %s)
                ON CONFLICT DO NOTHING""",
             (body.asset_id, entity["id"], body.role),
         )
@@ -1429,13 +1459,13 @@ def disassociate_asset(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         entity = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if not entity:
             raise HTTPException(status_code=404, detail="entity not found")
         conn.execute(
-            "DELETE FROM asset_entities WHERE asset_id = ? AND entity_id = ?",
+            "DELETE FROM asset_entities WHERE asset_id = %s AND entity_id = %s",
             (asset_id, entity["id"]),
         )
 
@@ -1493,7 +1523,7 @@ _IMAGE_TYPES = {"location", "character", "item"}
 
 def _build_image_prompt(project_slug: str, display_name: str, entity_type: str, body_text: str) -> str:
     if body_text:
-        clean_body = _re_img.sub(r'@@([^@]+)@@|##([^#]+)##|~~([^~]+)~~|\?\?([^?]+)\?\?', lambda m: next(g for g in m.groups() if g is not None), body_text)
+        clean_body = _re_img.sub(r'@@([^@]+)@@|##([^#]+)##|~~([^~]+)~~|\?\?([^%s]+)\?\?', lambda m: next(g for g in m.groups() if g is not None), body_text)
         clean_body = _re_img.sub(r'\s+', ' ', clean_body).strip()
     else:
         clean_body = ""
@@ -1525,7 +1555,7 @@ async def get_image_prompt(
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
         entity = conn.execute(
-            "SELECT id, type, display_name FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id, type, display_name FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
     if not entity:
@@ -1638,24 +1668,24 @@ async def record_line(
 
     with db() as conn:
         existing = conn.execute(
-            "SELECT id FROM assets WHERE project_id = ? AND sha256 = ?",
+            "SELECT id FROM assets WHERE project_id = %s AND sha256 = %s",
             (project["id"], sha256),
         ).fetchone()
         if existing:
             asset_id = existing["id"]
         else:
             cur = conn.execute(
-                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256) VALUES (?,?,?,?,?)",
-                (project["id"], rel_path, "audio/wav", len(wav_bytes), sha256),
+                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256, source) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+                (project["id"], rel_path, "audio/wav", len(wav_bytes), sha256, 'uploaded'),
             )
-            asset_id = cur.lastrowid
+            asset_id = cur.fetchone()["id"]
         conv_entity = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if conv_entity:
             conn.execute(
-                "INSERT OR IGNORE INTO asset_entities (asset_id, entity_id, role) VALUES (?,?,?)",
+                "INSERT OR IGNORE INTO asset_entities (asset_id, entity_id, role) VALUES (%s,%s,%s)",
                 (asset_id, conv_entity["id"], "recorded"),
             )
 
@@ -1716,7 +1746,7 @@ async def enhance_line(
     # Fetch the source asset
     with db() as conn:
         asset_row = conn.execute(
-            "SELECT rel_path, mime FROM assets WHERE id = ? AND project_id = ?",
+            "SELECT rel_path, mime FROM assets WHERE id = %s AND project_id = %s",
             (asset_id, project["id"]),
         ).fetchone()
     if not asset_row:
@@ -1749,24 +1779,24 @@ async def enhance_line(
 
     with db() as conn:
         existing = conn.execute(
-            "SELECT id FROM assets WHERE project_id = ? AND sha256 = ?",
+            "SELECT id FROM assets WHERE project_id = %s AND sha256 = %s",
             (project["id"], sha256),
         ).fetchone()
         if existing:
             new_asset_id = existing["id"]
         else:
             cur = conn.execute(
-                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256) VALUES (?,?,?,?,?)",
-                (project["id"], rel_path, "audio/wav", len(wav_out), sha256),
+                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256, source) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+                (project["id"], rel_path, "audio/wav", len(wav_out), sha256, 'uploaded'),
             )
-            new_asset_id = cur.lastrowid
+            new_asset_id = cur.fetchone()["id"]
         conv_entity = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if conv_entity:
             conn.execute(
-                "INSERT OR IGNORE INTO asset_entities (asset_id, entity_id, role) VALUES (?,?,?)",
+                "INSERT OR IGNORE INTO asset_entities (asset_id, entity_id, role) VALUES (%s,%s,%s)",
                 (new_asset_id, conv_entity["id"], "enhanced"),
             )
 
@@ -1843,26 +1873,26 @@ async def generate_voice(
     # Insert or update asset row
     with db() as conn:
         existing = conn.execute(
-            "SELECT id FROM assets WHERE project_id = ? AND sha256 = ?",
+            "SELECT id FROM assets WHERE project_id = %s AND sha256 = %s",
             (project["id"], sha256),
         ).fetchone()
         if existing:
             asset_id = existing["id"]
         else:
             cur = conn.execute(
-                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256) VALUES (?,?,?,?,?)",
-                (project["id"], rel_path, "audio/wav", len(wav_bytes), sha256),
+                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256, source) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+                (project["id"], rel_path, "audio/wav", len(wav_bytes), sha256, 'generated'),
             )
-            asset_id = cur.lastrowid
+            asset_id = cur.fetchone()["id"]
 
         # Associate with the conversation entity (role = voice)
         conv_entity = conn.execute(
-            "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
         if conv_entity:
             conn.execute(
-                "INSERT OR IGNORE INTO asset_entities (asset_id, entity_id, role) VALUES (?,?,?)",
+                "INSERT OR IGNORE INTO asset_entities (asset_id, entity_id, role) VALUES (%s,%s,%s)",
                 (asset_id, conv_entity["id"], "voice"),
             )
 
@@ -1922,7 +1952,7 @@ async def generate_image(
 
     with db() as conn:
         entity = conn.execute(
-            "SELECT id, type, display_name FROM entities WHERE project_id = ? AND slug = ?",
+            "SELECT id, type, display_name FROM entities WHERE project_id = %s AND slug = %s",
             (project["id"], entity_slug),
         ).fetchone()
     if not entity:
@@ -1986,12 +2016,12 @@ async def generate_image(
     mime = "image/jpeg"
     with db() as conn:
         cur = conn.execute(
-            "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256) VALUES (?, ?, ?, ?, ?)",
-            (project["id"], rel_path, mime, len(image_data), sha256),
+            "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256, source) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (project["id"], rel_path, mime, len(image_data), sha256, 'generated'),
         )
-        asset_id = cur.lastrowid
+        asset_id = cur.fetchone()["id"]
         conn.execute(
-            "INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+            "INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
             (asset_id, entity["id"], "generated"),
         )
 
@@ -2066,19 +2096,19 @@ def _reindex_entity_sync(project_slug: str, entity_slug: str, path: Path) -> Non
         # Separate connections so _rebuild_refs doesn't deadlock inside an open write txn
         with db() as conn:
             project = conn.execute(
-                "SELECT id FROM projects WHERE slug = ?", (project_slug,)
+                "SELECT id FROM projects WHERE slug = %s", (project_slug,)
             ).fetchone()
             if not project:
                 return
             project_id = project["id"]
             entity = conn.execute(
-                "SELECT id FROM entities WHERE project_id = ? AND slug = ?",
+                "SELECT id FROM entities WHERE project_id = %s AND slug = %s",
                 (project_id, entity_slug),
             ).fetchone()
             if entity:
                 display_name = post.metadata.get("display_name", entity_slug)
                 conn.execute(
-                    "UPDATE entities SET display_name = ?, updated_at = datetime('now') WHERE id = ?",
+                    "UPDATE entities SET display_name = %s, updated_at = NOW() WHERE id = %s",
                     (display_name, entity["id"]),
                 )
                 entity_id = entity["id"]
@@ -2086,10 +2116,10 @@ def _reindex_entity_sync(project_slug: str, entity_slug: str, path: Path) -> Non
                 entity_type = post.metadata.get("type", "location")
                 display_name = post.metadata.get("display_name", entity_slug)
                 cur = conn.execute(
-                    "INSERT INTO entities (project_id, slug, type, display_name) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO entities (project_id, slug, type, display_name) VALUES (%s, %s, %s, %s) RETURNING id",
                     (project_id, entity_slug, entity_type, display_name),
                 )
-                entity_id = cur.lastrowid
+                entity_id = cur.fetchone()["id"]
         # _rebuild_refs opens its own connection - must be outside the block above
         _rebuild_refs(project_id, entity_id, post.content)
     except Exception as exc:

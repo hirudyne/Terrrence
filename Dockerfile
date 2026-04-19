@@ -24,7 +24,8 @@ RUN pip install --break-system-packages \
     pyyaml \
     argon2-cffi \
     python-multipart \
-    httpx
+    httpx \
+    psycopg2-binary
 
 WORKDIR /workspace
 
