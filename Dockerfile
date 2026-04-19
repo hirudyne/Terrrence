@@ -17,7 +17,6 @@ RUN apt-get update && apt-get install -y \
 RUN pip install --break-system-packages \
     fastapi \
     "uvicorn[standard]" \
-    ypy-websocket \
     y-py \
     watchdog \
     python-frontmatter \
