@@ -2225,6 +2225,22 @@ _PART_PROMPTS = {
 }
 
 
+def _get_portrait_bytes(project_slug: str, entity_id: int) -> bytes | None:
+    """Return bytes of the portrait asset for a character, or None."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT a.rel_path FROM assets a "
+            "JOIN asset_entities ae ON ae.asset_id = a.id "
+            "WHERE ae.entity_id = %s AND ae.role = 'portrait' "
+            "ORDER BY a.id DESC LIMIT 1",
+            (entity_id,),
+        ).fetchone()
+    if not row:
+        return None
+    path = _asset_dir(project_slug) / Path(row["rel_path"]).name
+    return path.read_bytes() if path.exists() else None
+
+
 def _get_part_bytes(project_slug: str, entity_id: int, part_type: str) -> bytes | None:
     with db() as conn:
         row = conn.execute(
@@ -2310,13 +2326,18 @@ async def generate_part(
         art_style=art_style,
     )
 
-    # For non-head parts use head as reference image to anchor style/skin
-    ref_bytes = _get_part_bytes(project_slug, entity["id"], "head")
+    # Reference image selection:
+    # - head: use portrait asset if available, else fall back to generations (no ref)
+    # - all other parts: use the generated head as reference
+    if part_type == "head":
+        ref_bytes = _get_portrait_bytes(project_slug, entity["id"])
+    else:
+        ref_bytes = _get_part_bytes(project_slug, entity["id"], "head")
 
     if ref_bytes:
         image_data = await _xai_edit_async(xai_key, prompt, ref_bytes)
     else:
-        # head generation - use generations endpoint (no reference yet)
+        # head with no portrait yet - use generations endpoint
         import httpx as _httpx
         async with _httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
