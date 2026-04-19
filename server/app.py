@@ -2033,6 +2033,235 @@ async def generate_image(
     return {"id": asset_id, "rel_path": rel_path, "mime": mime, "bytes": len(image_data), "sha256": sha256}
 
 
+
+# ---------------------------------------------------------------------------
+# Character facing and walk frame generation
+# ---------------------------------------------------------------------------
+
+_FACING_PROMPTS = {
+    "back": (
+        "Full body character concept art, rear view of the exact same character shown in the reference image. "
+        "Identical clothing, hair, proportions and accessories as the reference, seen from directly behind. "
+        "Entire body visible head to toe, no cropping. "
+        "Plain neutral light gray seamless background, studio lighting, soft even illumination, no shadows. "
+        "No environment, no unrelated elements, no text, no logos. "
+        "Professional character design sheet style."
+    ),
+    "left": (
+        "Full body character concept art, side view from the left of the exact same character shown in the reference image. "
+        "Identical clothing, hair, proportions and accessories as the reference, seen in clean profile. "
+        "Entire body visible head to toe, no cropping. "
+        "Plain neutral light gray seamless background, studio lighting, soft even illumination, no shadows. "
+        "No environment, no unrelated elements, no text, no logos. "
+        "Professional character design sheet style."
+    ),
+    "right": (
+        "Full body character concept art, side view from the right of the exact same character shown in the reference image. "
+        "Identical clothing, hair, proportions and accessories as the reference, seen in clean profile. "
+        "Entire body visible head to toe, no cropping. "
+        "Plain neutral light gray seamless background, studio lighting, soft even illumination, no shadows. "
+        "No environment, no unrelated elements, no text, no logos. "
+        "Professional character design sheet style."
+    ),
+}
+
+_WALK_FRAME_POSES = [
+    "frame 1 of 8 of a walk cycle: the near foot planted flat on ground bearing full weight, far foot stepping forward with knee raised, far foot ahead of body about to land heel-first. Near arm swings forward, far arm swings back. Body upright, slight forward lean.",
+    "frame 2 of 8 of a walk cycle: near foot flat on ground, weight shifting forward, far foot landing heel on ground ahead. Both feet briefly near ground. Near arm forward, far arm back. Body upright.",
+    "frame 3 of 8 of a walk cycle: far foot now flat on ground bearing full weight, near leg lifting behind with knee slightly bent. Far arm swings forward, near arm swings back. Body upright, weight over far foot.",
+    "frame 4 of 8 of a walk cycle: far foot flat bearing weight, near leg swinging forward with knee raised, near foot ahead of body. Far arm back, near arm swings forward. Body upright, slight forward lean.",
+    "frame 5 of 8 of a walk cycle: near foot forward, heel striking ground, far arm swung forward, near arm back. Mirror pose of frame 1. Body upright, slight forward lean.",
+    "frame 6 of 8 of a walk cycle: near foot flat on ground, weight shifting forward onto near foot. Far foot landing heel on ground ahead. Far arm forward, near arm back. Body upright.",
+    "frame 7 of 8 of a walk cycle: near foot flat bearing full weight, far leg lifting behind with knee slightly bent. Near arm swings forward, far arm back. Body upright.",
+    "frame 8 of 8 of a walk cycle: near foot flat bearing weight, far leg swinging forward with knee raised, far foot ahead. Near arm back, far arm swings forward. Body upright, slight forward lean. Cycle returns to frame 1.",
+]
+
+
+def _xai_edit(xai_key: str, prompt: str, image_b64: str) -> bytes:
+    """Synchronous wrapper - call via asyncio or httpx directly."""
+    raise NotImplementedError("use async version")
+
+
+async def _xai_edit_async(xai_key: str, prompt: str, image_bytes: bytes) -> bytes:
+    import httpx as _httpx
+    import base64 as _b64
+    data_uri = "data:image/jpeg;base64," + _b64.b64encode(image_bytes).decode()
+    async with _httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            "https://api.x.ai/v1/images/edits",
+            headers={"Authorization": f"Bearer {xai_key}", "Content-Type": "application/json"},
+            json={"model": "grok-imagine-image", "prompt": prompt, "image": {"url": data_uri}},
+        )
+    if resp.status_code != 200:
+        try:
+            detail = resp.json().get("error") or resp.text
+        except Exception:
+            detail = resp.text
+        raise HTTPException(status_code=502, detail=f"xAI: {detail}")
+    img_url = resp.json()["data"][0]["url"]
+    async with _httpx.AsyncClient(timeout=60) as client:
+        dl = await client.get(img_url)
+    return dl.content
+
+
+async def _save_character_asset(project: dict, entity: dict, project_slug: str,
+                                 image_data: bytes, filename: str, role: str) -> dict:
+    import hashlib as _hl
+    sha256 = _hl.sha256(image_data).hexdigest()
+    rel_path = f"assets/{filename}"
+    dest = _asset_dir(project_slug) / filename
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(image_data)
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256, source) VALUES (%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (project_id, rel_path) DO UPDATE SET sha256=EXCLUDED.sha256, bytes=EXCLUDED.bytes RETURNING id",
+            (project["id"], rel_path, "image/jpeg", len(image_data), sha256, "generated"),
+        )
+        asset_id = cur.fetchone()["id"]
+        conn.execute(
+            "INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (%s,%s,%s) "
+            "ON CONFLICT (asset_id, entity_id) DO UPDATE SET role=EXCLUDED.role",
+            (asset_id, entity["id"], role),
+        )
+    return {"id": asset_id, "rel_path": rel_path, "mime": "image/jpeg", "bytes": len(image_data), "sha256": sha256, "role": role}
+
+
+def _get_portrait_bytes(project_slug: str, entity_id: int) -> bytes | None:
+    """Return bytes of the portrait asset for a character, or None."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT a.rel_path FROM assets a "
+            "JOIN asset_entities ae ON ae.asset_id = a.id "
+            "WHERE ae.entity_id = %s AND ae.role = 'portrait' "
+            "ORDER BY a.id LIMIT 1",
+            (entity_id,),
+        ).fetchone()
+    if not row:
+        return None
+    path = _asset_dir(project_slug) / Path(row["rel_path"]).name
+    return path.read_bytes() if path.exists() else None
+
+
+@app.post("/projects/{project_slug}/entities/{entity_slug}/generate-facing", status_code=201)
+async def generate_facing(
+    project_slug: str,
+    entity_slug: str,
+    facing: str,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    import datetime as _dt
+    if facing not in _FACING_PROMPTS:
+        raise HTTPException(status_code=400, detail="facing must be one of: back, left, right")
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+    with db() as conn:
+        entity = conn.execute(
+            "SELECT id, type, display_name FROM entities WHERE project_id=%s AND slug=%s",
+            (project["id"], entity_slug),
+        ).fetchone()
+    if not entity or entity["type"] != "character":
+        raise HTTPException(status_code=404, detail="character entity not found")
+    xai_key = _load_secret("XAI_API_KEY")
+    if not xai_key:
+        raise HTTPException(status_code=500, detail="XAI_API_KEY not configured")
+    portrait_bytes = _get_portrait_bytes(project_slug, entity["id"])
+    if not portrait_bytes:
+        raise HTTPException(status_code=400, detail="character has no portrait - generate portrait first")
+    post = _read_entity_file(project_slug, entity_slug)
+    art_style_clause = ""
+    with db() as conn:
+        game_row = conn.execute(
+            "SELECT slug FROM entities WHERE project_id=%s AND type='game'", (project["id"],)
+        ).fetchone()
+    if game_row:
+        try:
+            gpost = _read_entity_file(project_slug, game_row["slug"])
+            art_style = gpost.metadata.get("art_style", "").strip()
+            if art_style:
+                art_style_clause = f"Art style: {art_style}. "
+        except Exception:
+            pass
+    prompt = art_style_clause + _FACING_PROMPTS[facing]
+    image_data = await _xai_edit_async(xai_key, prompt, portrait_bytes)
+    ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"{entity_slug}_facing_{facing}_{ts}.jpg"
+    role = f"facing_{facing}"
+    return await _save_character_asset(project, entity, project_slug, image_data, filename, role)
+
+
+@app.post("/projects/{project_slug}/entities/{entity_slug}/generate-walk-frame", status_code=201)
+async def generate_walk_frame(
+    project_slug: str,
+    entity_slug: str,
+    facing: str,
+    frame: int,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    import datetime as _dt
+    if facing not in ("front", "back", "left", "right"):
+        raise HTTPException(status_code=400, detail="facing must be front, back, left, or right")
+    if frame < 1 or frame > 8:
+        raise HTTPException(status_code=400, detail="frame must be 1-8")
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+    with db() as conn:
+        entity = conn.execute(
+            "SELECT id, type, display_name FROM entities WHERE project_id=%s AND slug=%s",
+            (project["id"], entity_slug),
+        ).fetchone()
+    if not entity or entity["type"] != "character":
+        raise HTTPException(status_code=404, detail="character entity not found")
+    xai_key = _load_secret("XAI_API_KEY")
+    if not xai_key:
+        raise HTTPException(status_code=500, detail="XAI_API_KEY not configured")
+    # Reference image: use facing asset if available, fall back to portrait
+    ref_role = "portrait" if facing == "front" else f"facing_{facing}"
+    ref_bytes = None
+    with db() as conn:
+        row = conn.execute(
+            "SELECT a.rel_path FROM assets a JOIN asset_entities ae ON ae.asset_id=a.id "
+            "WHERE ae.entity_id=%s AND ae.role=%s ORDER BY a.id LIMIT 1",
+            (entity["id"], ref_role),
+        ).fetchone()
+    if row:
+        p = _asset_dir(project_slug) / Path(row["rel_path"]).name
+        if p.exists():
+            ref_bytes = p.read_bytes()
+    if not ref_bytes:
+        ref_bytes = _get_portrait_bytes(project_slug, entity["id"])
+    if not ref_bytes:
+        raise HTTPException(status_code=400, detail="no reference image found - generate portrait or facing first")
+    art_style_clause = ""
+    with db() as conn:
+        game_row = conn.execute(
+            "SELECT slug FROM entities WHERE project_id=%s AND type='game'", (project["id"],)
+        ).fetchone()
+    if game_row:
+        try:
+            gpost = _read_entity_file(project_slug, game_row["slug"])
+            art_style = gpost.metadata.get("art_style", "").strip()
+            if art_style:
+                art_style_clause = f"Art style: {art_style}. "
+        except Exception:
+            pass
+    base = (
+        f"{art_style_clause}"
+        "The character from the reference image, full body, side profile. "
+        "Identical face, clothing, hair and proportions to reference. "
+        "Full body visible head to toe, no cropping. "
+        "Plain neutral light gray seamless background, studio lighting, no shadows. "
+        "No text, no logos. Professional 2D game sprite style. "
+        "EXACTLY TWO LEGS AND TWO ARMS. "
+    )
+    pose = _WALK_FRAME_POSES[frame - 1]
+    prompt = base + pose
+    image_data = await _xai_edit_async(xai_key, prompt, ref_bytes)
+    ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"{entity_slug}_walk_{facing}_{frame:02d}_{ts}.jpg"
+    role = f"walk_{facing}_frame_{frame}"
+    return await _save_character_asset(project, entity, project_slug, image_data, filename, role)
+
 # ---------------------------------------------------------------------------
 # Static frontend (must be last - catch-all)
 # ---------------------------------------------------------------------------

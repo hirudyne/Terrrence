@@ -212,6 +212,17 @@ export class PreviewPane {
     const assetHeader = document.createElement('div')
     assetHeader.className = 'preview-assets-header'
     assetHeader.textContent = `Assets (${assets.length})`
+    if (detail.type === 'character') {
+      const detailsBtn = document.createElement('button')
+      detailsBtn.className = 'asset-btn asset-btn--details'
+      detailsBtn.textContent = 'Character Assets'
+      detailsBtn.onclick = () => {
+        import('./character-details').then(m =>
+          m.showCharacterDetails(state.projectSlug!, detail.slug, detail.display_name)
+        )
+      }
+      assetHeader.appendChild(detailsBtn)
+    }
     assetSection.appendChild(assetHeader)
 
     if (assets.length > 0) {
