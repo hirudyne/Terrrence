@@ -815,6 +815,13 @@ html, body { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden;
 }
 .char-details-walk-preview--empty { color: var(--text-dim); font-size: 0.75rem; }
 .char-details-walk-sheet { height: 160px; width: auto; display: block; }
+.char-details-part-err {
+  font-size: 0.6rem; color: #e06c75; text-align: center;
+  min-height: 0.8rem; max-width: 80px; word-break: break-word;
+}
+.char-details-walk-err {
+  font-size: 0.7rem; color: #e06c75; align-self: center;
+}
 
 /* ---- Character Assets button in preview ---- */
 .asset-btn--details {

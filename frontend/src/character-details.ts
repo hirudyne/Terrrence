@@ -112,14 +112,20 @@ export async function showCharacterDetails(
         genBtn.textContent = 'Regen'
         genBtn.disabled = false
       } catch (e: any) {
+        console.error('generate-part failed:', e)
         genBtn.textContent = 'Error'
+        errDiv.textContent = e?.message ?? 'Generation failed'
         setTimeout(() => {
           genBtn.disabled = isNonHead && !headExists()
           genBtn.textContent = asset ? 'Regen' : 'Generate'
-        }, 3000)
+          errDiv.textContent = ''
+        }, 5000)
       }
     })
     cell.appendChild(genBtn)
+    const errDiv = document.createElement('div')
+    errDiv.className = 'char-details-part-err'
+    cell.appendChild(errDiv)
     partsGrid.appendChild(cell)
   }
   partsSection.appendChild(partsGrid)
@@ -158,6 +164,9 @@ export async function showCharacterDetails(
     renderBtn.title = 'Generate head and required parts first'
   }
   walkControls.appendChild(renderBtn)
+  const walkErrDiv = document.createElement('div')
+  walkErrDiv.className = 'char-details-walk-err'
+  walkControls.appendChild(walkErrDiv)
   walkSection.appendChild(walkControls)
 
   const walkPreview = document.createElement('div')
@@ -187,11 +196,14 @@ export async function showCharacterDetails(
       img.className = 'char-details-walk-sheet'
       walkPreview.appendChild(img)
     } catch (e: any) {
+      console.error('render-walk failed:', e)
       renderBtn.textContent = 'Error'
+      walkErrDiv.textContent = e?.message ?? 'Render failed'
       setTimeout(() => {
         renderBtn.disabled = false
         renderBtn.textContent = 'Render Walk Cycle'
-      }, 3000)
+        walkErrDiv.textContent = ''
+      }, 5000)
       return
     }
     renderBtn.disabled = false
