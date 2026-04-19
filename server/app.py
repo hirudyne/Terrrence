@@ -2039,6 +2039,52 @@ async def generate_image(
 # ---------------------------------------------------------------------------
 
 
+async def _xai_edit_async(xai_key: str, prompt: str, image_bytes: bytes) -> bytes:
+    import httpx as _httpx
+    import base64 as _b64
+    data_uri = "data:image/jpeg;base64," + _b64.b64encode(image_bytes).decode()
+    async with _httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            "https://api.x.ai/v1/images/edits",
+            headers={"Authorization": f"Bearer {xai_key}", "Content-Type": "application/json"},
+            json={"model": "grok-imagine-image", "prompt": prompt, "image": {"url": data_uri}},
+        )
+    if resp.status_code != 200:
+        try:
+            detail = resp.json().get("error") or resp.text
+        except Exception:
+            detail = resp.text
+        raise HTTPException(status_code=502, detail=f"xAI: {detail}")
+    img_url = resp.json()["data"][0]["url"]
+    async with _httpx.AsyncClient(timeout=60) as client:
+        dl = await client.get(img_url)
+    return dl.content
+
+
+async def _save_character_asset(project: dict, entity: dict, project_slug: str,
+                                 image_data: bytes, filename: str, role: str) -> dict:
+    import hashlib as _hl
+    sha256 = _hl.sha256(image_data).hexdigest()
+    rel_path = f"assets/{filename}"
+    dest = _asset_dir(project_slug) / filename
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(image_data)
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256, source) VALUES (%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (project_id, rel_path) DO UPDATE SET sha256=EXCLUDED.sha256, bytes=EXCLUDED.bytes RETURNING id",
+            (project["id"], rel_path, "image/jpeg", len(image_data), sha256, "generated"),
+        )
+        asset_id = cur.fetchone()["id"]
+        conn.execute(
+            "INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (%s,%s,%s) "
+            "ON CONFLICT (asset_id, entity_id) DO UPDATE SET role=EXCLUDED.role",
+            (asset_id, entity["id"], role),
+        )
+    return {"id": asset_id, "rel_path": rel_path, "mime": "image/jpeg", "bytes": len(image_data), "sha256": sha256, "role": role}
+
+
+
 # ---------------------------------------------------------------------------
 # Character part generation and walk cycle rendering
 # ---------------------------------------------------------------------------
