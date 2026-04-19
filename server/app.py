@@ -28,7 +28,10 @@ def _load_secret(key: str) -> str | None:
         for line in secrets_path.read_text().splitlines():
             line = line.strip()
             if line.startswith(key + "="):
-                return line[len(key) + 1:].strip()
+                val = line[len(key) + 1:].strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                    val = val[1:-1]
+                return val
     return os.environ.get(key)
 INSECURE    = os.environ.get("TERRRENCE_INSECURE_COOKIES", "0") == "1"
 
