@@ -219,8 +219,3 @@ Conversation entity bodies contain structured JSON instead of prose. Schema defi
 - All others: unicode normalise -> ASCII -> lowercase -> collapse non-alphanumeric runs to `_` -> truncate 64 chars
 - `deriveSlug()` in `pane-nav.ts` must be kept in sync with `_derive_slug()` in `app.py`
 
----
-
-## License
-
-MIT
