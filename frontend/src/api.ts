@@ -38,7 +38,7 @@ export interface SceneCharacter {
   slug: string
   display_name: string
   meta: Record<string, unknown>
-  portrait_asset: SceneAsset | null
+  sprite_asset: SceneAsset | null
 }
 
 export interface SceneItem {

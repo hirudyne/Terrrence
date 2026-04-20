@@ -213,9 +213,9 @@ export class ScenePreview {
     el.style.left = `${x * 100}%`
     el.style.top = `${y * 100}%`
 
-    if (rt.data.portrait_asset) {
+    if (rt.data.sprite_asset) {
       const img = document.createElement('img')
-      img.src = api.assetFileUrl(this.projectSlug!, rt.data.portrait_asset.id)
+      img.src = api.assetFileUrl(this.projectSlug!, rt.data.sprite_asset.id)
       img.alt = rt.data.display_name
       el.appendChild(img)
     } else {

@@ -916,7 +916,7 @@ def get_scene_data(
     """Bulk endpoint: returns all data needed to bootstrap the scene preview.
 
     Returns:
-      game, locations (with meta+scene_asset), characters (with meta+portrait_asset),
+      game, locations (with meta+scene_asset), characters (with meta+sprite_asset),
       items (with meta+first_asset), spots (with meta), events (trigger+effect), chapters.
     """
     api_key_id, _ = _require_session(session)
@@ -944,16 +944,22 @@ def get_scene_data(
             (project_id,),
         ).fetchall()
 
-        # Portrait asset per character (preferred over first-asset)
+        # Sprite/portrait assets per character - fetch all facing roles, pick best in Python
+        _sprite_roles = [
+            'facing_front_transparent', 'facing_left_transparent',
+            'facing_right_transparent', 'facing_back_transparent',
+            'facing_front', 'facing_left', 'facing_right', 'facing_back',
+            'portrait',
+        ]
         portrait_rows = conn.execute(
-            """SELECT DISTINCT ON (ae.entity_id) e.slug AS entity_slug,
-                      a.id, a.rel_path, a.mime, ae.role
+            """SELECT e.slug AS entity_slug, a.id, a.rel_path, a.mime, ae.role
                FROM asset_entities ae
                JOIN assets a ON a.id = ae.asset_id
                JOIN entities e ON e.id = ae.entity_id
-               WHERE e.project_id = %s AND e.type = 'character' AND ae.role = 'portrait'
+               WHERE e.project_id = %s AND e.type = 'character'
+                 AND ae.role = ANY(%s)
                ORDER BY ae.entity_id, a.id""",
-            (project_id,),
+            (project_id, _sprite_roles),
         ).fetchall()
 
         # For scene_image lookups we need a full asset map keyed by asset id
@@ -965,9 +971,21 @@ def get_scene_data(
     first_asset_by_slug: dict = {r["entity_slug"]: {"id": r["id"], "rel_path": r["rel_path"],
                                                       "mime": r["mime"], "role": r["role"]}
                                   for r in first_asset_rows}
-    portrait_by_slug: dict = {r["entity_slug"]: {"id": r["id"], "rel_path": r["rel_path"],
-                                                   "mime": r["mime"], "role": r["role"]}
-                               for r in portrait_rows}
+    # Pick best sprite per character: transparent facing > opaque facing > portrait
+    _sprite_priority = [
+        'facing_front_transparent', 'facing_left_transparent',
+        'facing_right_transparent', 'facing_back_transparent',
+        'facing_front', 'facing_left', 'facing_right', 'facing_back',
+        'portrait',
+    ]
+    _char_sprites: dict = {}
+    for r in portrait_rows:
+        slug = r['entity_slug']
+        role = r['role']
+        existing = _char_sprites.get(slug)
+        if existing is None or _sprite_priority.index(role) < _sprite_priority.index(existing['role']):
+            _char_sprites[slug] = {'id': r['id'], 'rel_path': r['rel_path'], 'mime': r['mime'], 'role': role}
+    portrait_by_slug: dict = _char_sprites
 
     def _read_meta(slug: str) -> dict:
         try:
@@ -1012,7 +1030,7 @@ def get_scene_data(
             meta = _read_meta(slug)
             result["characters"].append({
                 "slug": slug, "display_name": dname, "meta": meta,
-                "portrait_asset": portrait_by_slug.get(slug) or first_asset_by_slug.get(slug),
+                "sprite_asset": portrait_by_slug.get(slug) or first_asset_by_slug.get(slug),
             })
 
         elif etype == "item":
