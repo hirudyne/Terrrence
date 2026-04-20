@@ -2111,7 +2111,8 @@ async def _xai_edit_async(xai_key: str, prompt: str, image_bytes: bytes) -> byte
 
 
 async def _save_character_asset(project: dict, entity: dict, project_slug: str,
-                                 image_data: bytes, filename: str, role: str) -> dict:
+                                 image_data: bytes, filename: str, role: str,
+                                 mime: str = "image/jpeg") -> dict:
     import hashlib as _hl
     sha256 = _hl.sha256(image_data).hexdigest()
     rel_path = f"assets/{filename}"
@@ -2122,7 +2123,7 @@ async def _save_character_asset(project: dict, entity: dict, project_slug: str,
         cur = conn.execute(
             "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256, source) VALUES (%s,%s,%s,%s,%s,%s) "
             "ON CONFLICT (project_id, rel_path) DO UPDATE SET sha256=EXCLUDED.sha256, bytes=EXCLUDED.bytes RETURNING id",
-            (project["id"], rel_path, "image/jpeg", len(image_data), sha256, "generated"),
+            (project["id"], rel_path, mime, len(image_data), sha256, "generated"),
         )
         asset_id = cur.fetchone()["id"]
         conn.execute(
@@ -2130,7 +2131,7 @@ async def _save_character_asset(project: dict, entity: dict, project_slug: str,
             "ON CONFLICT (asset_id, entity_id) DO UPDATE SET role=EXCLUDED.role",
             (asset_id, entity["id"], role),
         )
-    return {"id": asset_id, "rel_path": rel_path, "mime": "image/jpeg", "bytes": len(image_data), "sha256": sha256, "role": role}
+    return {"id": asset_id, "rel_path": rel_path, "mime": mime, "bytes": len(image_data), "sha256": sha256, "role": role}
 
 
 def _get_portrait_bytes(project_slug: str, entity_id: int) -> bytes | None:
@@ -2495,15 +2496,16 @@ async def render_walk(
         x1c=min(exp_w,x1); y1c=min(exp_h,y1)
         cropped = rotated.crop((x0c,y0c,x1c,y1c))
 
-        bg = _Img.new("RGB", (frame_w, frame_h), BG_COLOR)
-        bg.paste(cropped, (x0c-x0, y0c-y0), cropped)
+        frame_rgba = _Img.new("RGBA", (frame_w, frame_h), (0, 0, 0, 0))
+        frame_rgba.paste(cropped, (x0c-x0, y0c-y0), cropped)
 
+        # Save as RGBA PNG to preserve transparency
         buf = _io.BytesIO()
-        bg.save(buf, "JPEG", quality=90)
+        frame_rgba.save(buf, "PNG")
         frame_bytes = buf.getvalue()
-        frame_filename = f"{entity_slug}_puppet_{facing}_{f+1:02d}_{ts}.jpg"
+        frame_filename = f"{entity_slug}_puppet_{facing}_{f+1:02d}_{ts}.png"
         role = f"walk_puppet_{facing}_frame_{f+1}"
-        result = await _save_character_asset(project, entity, project_slug, frame_bytes, frame_filename, role)
+        result = await _save_character_asset(project, entity, project_slug, frame_bytes, frame_filename, role, mime="image/png")
         saved_frames.append(result)
 
     return {"frames": saved_frames, "frame_w": frame_w, "frame_h": frame_h, "n": N_PUPPET_FRAMES}
