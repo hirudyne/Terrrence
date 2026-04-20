@@ -347,7 +347,7 @@ def share_project(slug: str, body: ShareProjectBody, session: str | None = Cooki
 
 import frontmatter as fm
 
-ENTITY_TYPES = {"location", "character", "item", "event", "game", "chapter", "conversation", "spot", "part"}
+ENTITY_TYPES = {"location", "character", "item", "event", "game", "chapter", "conversation", "spot"}
 REF_PATTERNS = [
     (re.compile(r'@@([^@]+)@@'),             "location"),
     (re.compile(r'##([^#]+)##'),             "character"),
@@ -2039,6 +2039,55 @@ async def generate_image(
 # ---------------------------------------------------------------------------
 
 
+
+# ---------------------------------------------------------------------------
+# Character facing and walk frame generation
+# ---------------------------------------------------------------------------
+
+_FACING_PROMPTS = {
+    "back": (
+        "Full body character concept art, rear view of the exact same character shown in the reference image. "
+        "Identical clothing, hair, proportions and accessories as the reference, seen from directly behind. "
+        "Entire body visible head to toe, no cropping. "
+        "Plain neutral light gray seamless background, studio lighting, soft even illumination, no shadows. "
+        "No environment, no unrelated elements, no text, no logos. "
+        "Professional character design sheet style."
+    ),
+    "left": (
+        "Full body character concept art, side view from the left of the exact same character shown in the reference image. "
+        "Identical clothing, hair, proportions and accessories as the reference, seen in clean profile. "
+        "Entire body visible head to toe, no cropping. "
+        "Plain neutral light gray seamless background, studio lighting, soft even illumination, no shadows. "
+        "No environment, no unrelated elements, no text, no logos. "
+        "Professional character design sheet style."
+    ),
+    "right": (
+        "Full body character concept art, side view from the right of the exact same character shown in the reference image. "
+        "Identical clothing, hair, proportions and accessories as the reference, seen in clean profile. "
+        "Entire body visible head to toe, no cropping. "
+        "Plain neutral light gray seamless background, studio lighting, soft even illumination, no shadows. "
+        "No environment, no unrelated elements, no text, no logos. "
+        "Professional character design sheet style."
+    ),
+}
+
+_WALK_FRAME_POSES = [
+    "frame 1 of 8 of a walk cycle: the near foot planted flat on ground bearing full weight, far foot stepping forward with knee raised, far foot ahead of body about to land heel-first. Near arm swings forward, far arm swings back. Body upright, slight forward lean.",
+    "frame 2 of 8 of a walk cycle: near foot flat on ground, weight shifting forward, far foot landing heel on ground ahead. Both feet briefly near ground. Near arm forward, far arm back. Body upright.",
+    "frame 3 of 8 of a walk cycle: far foot now flat on ground bearing full weight, near leg lifting behind with knee slightly bent. Far arm swings forward, near arm swings back. Body upright, weight over far foot.",
+    "frame 4 of 8 of a walk cycle: far foot flat bearing weight, near leg swinging forward with knee raised, near foot ahead of body. Far arm back, near arm swings forward. Body upright, slight forward lean.",
+    "frame 5 of 8 of a walk cycle: near foot forward, heel striking ground, far arm swung forward, near arm back. Mirror pose of frame 1. Body upright, slight forward lean.",
+    "frame 6 of 8 of a walk cycle: near foot flat on ground, weight shifting forward onto near foot. Far foot landing heel on ground ahead. Far arm forward, near arm back. Body upright.",
+    "frame 7 of 8 of a walk cycle: near foot flat bearing full weight, far leg lifting behind with knee slightly bent. Near arm swings forward, far arm back. Body upright.",
+    "frame 8 of 8 of a walk cycle: near foot flat bearing weight, far leg swinging forward with knee raised, far foot ahead. Near arm back, far arm swings forward. Body upright, slight forward lean. Cycle returns to frame 1.",
+]
+
+
+def _xai_edit(xai_key: str, prompt: str, image_b64: str) -> bytes:
+    """Synchronous wrapper - call via asyncio or httpx directly."""
+    raise NotImplementedError("use async version")
+
+
 async def _xai_edit_async(xai_key: str, prompt: str, image_bytes: bytes) -> bytes:
     import httpx as _httpx
     import base64 as _b64
@@ -2084,193 +2133,6 @@ async def _save_character_asset(project: dict, entity: dict, project_slug: str,
     return {"id": asset_id, "rel_path": rel_path, "mime": "image/jpeg", "bytes": len(image_data), "sha256": sha256, "role": role}
 
 
-
-# ---------------------------------------------------------------------------
-# Character part generation and walk cycle rendering
-# ---------------------------------------------------------------------------
-
-# Part types in composite z-order (back to front, mirrored parts generated once,
-# flipped at render time for far side)
-_PART_TYPES = ["hair", "head", "torso", "upper_arm", "lower_arm", "hand",
-               "upper_leg", "lower_leg", "foot"]
-
-# Pivot points as fraction of part image (attach_x, attach_y) - point that snaps
-# to the parent's child_anchor. Also defines child_anchor for the next part down.
-# attach: where this part attaches to its parent
-# child: where the next part in chain attaches on this part
-_PART_PIVOTS = {
-    "hair":      {"attach": (0.5, 1.0), "child": None},
-    "head":      {"attach": (0.5, 0.9), "child": (0.5, 1.0)},   # child=neck bottom
-    "torso":     {"attach": (0.5, 0.0), "child": (0.5, 1.0)},   # attach=neck top, child=hip
-    "upper_arm": {"attach": (0.5, 0.0), "child": (0.5, 1.0)},
-    "lower_arm": {"attach": (0.5, 0.0), "child": (0.5, 1.0)},
-    "hand":      {"attach": (0.5, 0.0), "child": None},
-    "upper_leg": {"attach": (0.5, 0.0), "child": (0.5, 1.0)},
-    "lower_leg": {"attach": (0.5, 0.0), "child": (0.5, 1.0)},
-    "foot":      {"attach": (0.5, 0.0), "child": None},
-}
-
-# Torso anchor points for arm and leg roots (as fraction of torso image)
-_TORSO_ANCHORS = {
-    "shoulder": (0.5, 0.12),   # where upper_arm attaches
-    "hip":      (0.5, 0.88),   # where upper_leg attaches
-}
-
-# Gait keyframes: 8 frames, angles in degrees for each articulated part.
-# Positive = clockwise rotation. near_ = near side (rendered on top), far_ = far side.
-# Torso: (sway_x_px, bob_y_px) translation offsets
-_GAIT_STYLES = {
-    "shuffle": {
-        # Very small range, flat-footed, minimal arm swing - elderly/tired gait
-        "torso_bob":     [ 0, -3, -5, -3,  0, -3, -5, -3],
-        "torso_sway":    [ 0,  2,  0, -2,  0,  2,  0, -2],
-        "near_upper_leg":[ 8, 15,  5, -8,-15, -5,  0,  5],
-        "near_lower_leg":[ 3,  5,  2, -2, -5, -2,  0,  2],
-        "near_foot":     [-3, -5, -2,  2,  5,  2,  0, -2],
-        "far_upper_leg": [-8,-15, -5,  8, 15,  5,  0, -5],
-        "far_lower_leg": [-3, -5, -2,  2,  5,  2,  0, -2],
-        "far_foot":      [ 3,  5,  2, -2, -5, -2,  0,  2],
-        "near_upper_arm":[ 5,  8,  3, -5, -8, -3,  0,  3],
-        "near_lower_arm":[ 2,  4,  1, -2, -4, -1,  0,  1],
-        "far_upper_arm": [-5, -8, -3,  5,  8,  3,  0, -3],
-        "far_lower_arm": [-2, -4, -1,  2,  4,  1,  0, -1],
-        "head_bob":      [ 0, -2, -3, -2,  0, -2, -3, -2],
-    },
-    "stride": {
-        # Full confident stride
-        "torso_bob":     [ 0, -5,-10, -5,  0, -5,-10, -5],
-        "torso_sway":    [ 0,  4,  0, -4,  0,  4,  0, -4],
-        "near_upper_leg":[20, 35, 10,-20,-35,-10,  0, 10],
-        "near_lower_leg":[ 5, 12,  4, -5,-12, -4,  0,  4],
-        "near_foot":     [-5,-12, -4,  5, 12,  4,  0, -4],
-        "far_upper_leg": [-20,-35,-10, 20, 35, 10,  0,-10],
-        "far_lower_leg": [-5,-12, -4,  5, 12,  4,  0, -4],
-        "far_foot":      [ 5, 12,  4, -5,-12, -4,  0,  4],
-        "near_upper_arm":[-20,-35,-10, 20, 35, 10,  0,-10],
-        "near_lower_arm":[-5,-10, -3,  5, 10,  3,  0, -3],
-        "far_upper_arm": [20, 35, 10,-20,-35,-10,  0, 10],
-        "far_lower_arm": [ 5, 10,  3, -5,-10, -3,  0,  3],
-        "head_bob":      [ 0, -4, -7, -4,  0, -4, -7, -4],
-    },
-    "jog": {
-        # Bouncy run, larger angles, more bob
-        "torso_bob":     [ 0,-8,-14, -8,  0, -8,-14, -8],
-        "torso_sway":    [ 0,  5,  0, -5,  0,  5,  0, -5],
-        "near_upper_leg":[30, 50, 15,-30,-50,-15,  0, 15],
-        "near_lower_leg":[10, 20,  8,-10,-20, -8,  0,  8],
-        "near_foot":     [-8,-15, -6,  8, 15,  6,  0, -6],
-        "far_upper_leg": [-30,-50,-15, 30, 50, 15,  0,-15],
-        "far_lower_leg": [-10,-20, -8, 10, 20,  8,  0, -8],
-        "far_foot":      [ 8, 15,  6, -8,-15, -6,  0,  6],
-        "near_upper_arm":[-30,-50,-15, 30, 50, 15,  0,-15],
-        "near_lower_arm":[-10,-18, -6, 10, 18,  6,  0, -6],
-        "far_upper_arm": [30, 50, 15,-30,-50,-15,  0, 15],
-        "far_lower_arm": [10, 18,  6,-10,-18, -6,  0,  6],
-        "head_bob":      [ 0, -6,-10, -6,  0, -6,-10, -6],
-    },
-    "waddle": {
-        # Wide side-to-side, minimal leg lift - penguin/rotund gait
-        "torso_bob":     [ 0, -2, -4, -2,  0, -2, -4, -2],
-        "torso_sway":    [ 0,  8,  0, -8,  0,  8,  0, -8],
-        "near_upper_leg":[ 5, 10,  3, -5,-10, -3,  0,  3],
-        "near_lower_leg":[ 1,  2,  1, -1, -2, -1,  0,  1],
-        "near_foot":     [-1, -2, -1,  1,  2,  1,  0, -1],
-        "far_upper_leg": [-5,-10, -3,  5, 10,  3,  0, -3],
-        "far_lower_leg": [-1, -2, -1,  1,  2,  1,  0, -1],
-        "far_foot":      [ 1,  2,  1, -1, -2, -1,  0,  1],
-        "near_upper_arm":[ 8, 12,  4, -8,-12, -4,  0,  4],
-        "near_lower_arm":[ 3,  5,  2, -3, -5, -2,  0,  2],
-        "far_upper_arm": [-8,-12, -4,  8, 12,  4,  0, -4],
-        "far_lower_arm": [-3, -5, -2,  3,  5,  2,  0, -3],
-        "head_bob":      [ 0, -1, -2, -1,  0, -1, -2, -1],
-    },
-}
-
-# Prompt templates per part type.
-# {art_style}, {char_desc}, {skin_tone} are substituted at call time.
-_PART_PROMPTS = {
-    "hair": (
-        "Isolated hair only, no face, no neck, no body. "
-        "Side profile view facing left. "
-        "The hair of this character: {char_desc}. "
-        "Hair fills the full height of the image from crown to nape, centred horizontally. "
-        "Plain neutral light gray seamless background. No skin, no clothing, no other body parts. "
-        "Art style: {art_style}."
-    ),
-    "head": (
-        "Isolated head only, no neck, no body, no hair. "
-        "Side profile view facing left. "
-        "The head and face of this character: {char_desc}. "
-        "Head fills the full height of the image from chin to crown, centred horizontally. "
-        "Skin tone: {skin_tone}. "
-        "Plain neutral light gray seamless background. No hair, no clothing. "
-        "Art style: {art_style}."
-    ),
-    "torso": (
-        "Isolated torso only - from neck to hips, no head, no limbs. "
-        "Side profile view facing left. "
-        "The torso and clothing of this character: {char_desc}. "
-        "Torso fills the full height of the image from neck top to hip bottom, centred horizontally. "
-        "Skin tone: {skin_tone}. "
-        "Plain neutral light gray seamless background. No head, no arms, no legs. "
-        "Art style: {art_style}."
-    ),
-    "upper_arm": (
-        "Isolated upper arm only - from shoulder to elbow, no other body parts. "
-        "Side profile view facing left, arm hanging straight down. "
-        "The arm and sleeve of this character: {char_desc}. "
-        "Upper arm fills the full height of the image from shoulder top to elbow bottom, centred horizontally. "
-        "Skin tone: {skin_tone}. "
-        "Plain neutral light gray seamless background. "
-        "Art style: {art_style}."
-    ),
-    "lower_arm": (
-        "Isolated lower arm only - from elbow to wrist, no other body parts. "
-        "Side profile view facing left, arm hanging straight down. "
-        "The forearm and sleeve cuff of this character: {char_desc}. "
-        "Lower arm fills the full height of the image from elbow top to wrist bottom, centred horizontally. "
-        "Skin tone: {skin_tone}. "
-        "Plain neutral light gray seamless background. "
-        "Art style: {art_style}."
-    ),
-    "hand": (
-        "Isolated hand only - from wrist to fingertips, no arm, no other body parts. "
-        "Side profile view facing left, hand relaxed and open. "
-        "The hand of this character: {char_desc}. "
-        "Hand fills the full height of the image from wrist top to fingertip bottom, centred horizontally. "
-        "Skin tone: {skin_tone}. "
-        "Plain neutral light gray seamless background. "
-        "Art style: {art_style}."
-    ),
-    "upper_leg": (
-        "Isolated upper leg only - from hip to knee, no other body parts. "
-        "Side profile view facing left, leg straight and vertical. "
-        "The upper leg and clothing of this character: {char_desc}. "
-        "Upper leg fills the full height of the image from hip top to knee bottom, centred horizontally. "
-        "Skin tone: {skin_tone}. "
-        "Plain neutral light gray seamless background. "
-        "Art style: {art_style}."
-    ),
-    "lower_leg": (
-        "Isolated lower leg only - from knee to ankle, no other body parts. "
-        "Side profile view facing left, leg straight and vertical. "
-        "The lower leg and clothing of this character: {char_desc}. "
-        "Lower leg fills the full height of the image from knee top to ankle bottom, centred horizontally. "
-        "Skin tone: {skin_tone}. "
-        "Plain neutral light gray seamless background. "
-        "Art style: {art_style}."
-    ),
-    "foot": (
-        "Isolated foot and footwear only - from ankle to toe, no other body parts. "
-        "Side profile view facing left, foot flat on an invisible ground plane. "
-        "The foot and footwear of this character: {char_desc}. "
-        "Foot fills the full height of the image from ankle top to sole bottom, centred horizontally. "
-        "Plain neutral light gray seamless background. "
-        "Art style: {art_style}."
-    ),
-}
-
-
 def _get_portrait_bytes(project_slug: str, entity_id: int) -> bytes | None:
     """Return bytes of the portrait asset for a character, or None."""
     with db() as conn:
@@ -2278,7 +2140,7 @@ def _get_portrait_bytes(project_slug: str, entity_id: int) -> bytes | None:
             "SELECT a.rel_path FROM assets a "
             "JOIN asset_entities ae ON ae.asset_id = a.id "
             "WHERE ae.entity_id = %s AND ae.role = 'portrait' "
-            "ORDER BY a.id DESC LIMIT 1",
+            "ORDER BY a.id LIMIT 1",
             (entity_id,),
         ).fetchone()
     if not row:
@@ -2287,60 +2149,16 @@ def _get_portrait_bytes(project_slug: str, entity_id: int) -> bytes | None:
     return path.read_bytes() if path.exists() else None
 
 
-def _get_part_bytes(project_slug: str, entity_id: int, part_type: str) -> bytes | None:
-    with db() as conn:
-        row = conn.execute(
-            "SELECT a.rel_path FROM assets a JOIN asset_entities ae ON ae.asset_id=a.id "
-            "WHERE ae.entity_id=%s AND ae.role=%s ORDER BY a.id DESC LIMIT 1",
-            (entity_id, f"part_{part_type}"),
-        ).fetchone()
-    if not row:
-        return None
-    path = _asset_dir(project_slug) / Path(row["rel_path"]).name
-    return path.read_bytes() if path.exists() else None
-
-
-def _extract_skin_tone(image_bytes: bytes) -> str:
-    """Extract dominant skin-range colour from image bytes, return as #rrggbb hex."""
-    import io as _io
-    from PIL import Image as _Img
-    img = _Img.open(_io.BytesIO(image_bytes)).convert("RGB")
-    img = img.resize((64, 64))
-    pixels = list(img.getdata())
-    # Skin heuristic: r > 80, r > g > b, r-b > 20
-    skin = [p for p in pixels if p[0] > 80 and p[0] > p[1] > p[2] and p[0] - p[2] > 20]
-    if not skin:
-        return "#c8a882"  # fallback neutral
-    r = sum(p[0] for p in skin) // len(skin)
-    g = sum(p[1] for p in skin) // len(skin)
-    b = sum(p[2] for p in skin) // len(skin)
-    return f"#{r:02x}{g:02x}{b:02x}"
-
-
-def _get_art_style(project_slug: str, project_id: int) -> str:
-    with db() as conn:
-        row = conn.execute(
-            "SELECT slug FROM entities WHERE project_id=%s AND type='game'", (project_id,)
-        ).fetchone()
-    if not row:
-        return ""
-    try:
-        gpost = _read_entity_file(project_slug, row["slug"])
-        return gpost.metadata.get("art_style", "").strip()
-    except Exception:
-        return ""
-
-
-@app.post("/projects/{project_slug}/entities/{entity_slug}/generate-part", status_code=201)
-async def generate_part(
+@app.post("/projects/{project_slug}/entities/{entity_slug}/generate-facing", status_code=201)
+async def generate_facing(
     project_slug: str,
     entity_slug: str,
-    part_type: str,
+    facing: str,
     session: str | None = Cookie(default=None, alias=COOKIE_NAME),
 ):
     import datetime as _dt
-    if part_type not in _PART_TYPES:
-        raise HTTPException(status_code=400, detail=f"part_type must be one of {_PART_TYPES}")
+    if facing not in _FACING_PROMPTS:
+        raise HTTPException(status_code=400, detail="facing must be one of: back, left, right")
     api_key_id, _ = _require_session(session)
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
@@ -2350,91 +2168,47 @@ async def generate_part(
         ).fetchone()
     if not entity or entity["type"] != "character":
         raise HTTPException(status_code=404, detail="character entity not found")
-
-    # Enforce head-first rule for non-head parts
-    if part_type != "head":
-        head_bytes = _get_part_bytes(project_slug, entity["id"], "head")
-        if not head_bytes:
-            raise HTTPException(status_code=400, detail="generate head first")
-
     xai_key = _load_secret("XAI_API_KEY")
     if not xai_key:
         raise HTTPException(status_code=500, detail="XAI_API_KEY not configured")
-
+    portrait_bytes = _get_portrait_bytes(project_slug, entity["id"])
+    if not portrait_bytes:
+        raise HTTPException(status_code=400, detail="character has no portrait - generate portrait first")
     post = _read_entity_file(project_slug, entity_slug)
-    char_desc = post.metadata.get("physical_appearance", "").strip() or entity["display_name"]
-    skin_tone = post.metadata.get("skin_tone", "#c8a882").strip()
-    art_style = _get_art_style(project_slug, project["id"])
-
-    prompt = _PART_PROMPTS[part_type].format(
-        char_desc=char_desc,
-        skin_tone=skin_tone,
-        art_style=art_style,
-    )
-
-    # Reference image selection:
-    # - head: use portrait asset if available, else fall back to generations (no ref)
-    # - all other parts: use the generated head as reference
-    if part_type == "head":
-        ref_bytes = _get_portrait_bytes(project_slug, entity["id"])
-    else:
-        ref_bytes = _get_part_bytes(project_slug, entity["id"], "head")
-
-    if ref_bytes:
-        image_data = await _xai_edit_async(xai_key, prompt, ref_bytes)
-    else:
-        # head with no portrait yet - use generations endpoint
-        import httpx as _httpx
-        async with _httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                "https://api.x.ai/v1/images/generations",
-                headers={"Authorization": f"Bearer {xai_key}", "Content-Type": "application/json"},
-                json={"model": "grok-imagine-image", "prompt": prompt, "n": 1},
-            )
-        if resp.status_code != 200:
-            try:
-                detail = resp.json().get("error") or resp.text
-            except Exception:
-                detail = resp.text
-            raise HTTPException(status_code=502, detail=f"xAI: {detail}")
-        img_url = resp.json()["data"][0]["url"]
-        async with _httpx.AsyncClient(timeout=60) as client:
-            dl = await client.get(img_url)
-        image_data = dl.content
-
-    ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filename = f"{entity_slug}_part_{part_type}_{ts}.jpg"
-    role = f"part_{part_type}"
-    result = await _save_character_asset(project, entity, project_slug, image_data, filename, role)
-
-    # After head generation: extract and store skin tone
-    if part_type == "head":
-        skin_tone = _extract_skin_tone(image_data)
-        import frontmatter as _fm
+    art_style_clause = ""
+    with db() as conn:
+        game_row = conn.execute(
+            "SELECT slug FROM entities WHERE project_id=%s AND type='game'", (project["id"],)
+        ).fetchone()
+    if game_row:
         try:
-            fpath = _entity_path(project_slug, entity_slug)
-            fpost = _fm.load(str(fpath))
-            fpost.metadata["skin_tone"] = skin_tone
-            fpath.write_text(_fm.dumps(fpost))
+            gpost = _read_entity_file(project_slug, game_row["slug"])
+            art_style = gpost.metadata.get("art_style", "").strip()
+            if art_style:
+                art_style_clause = f"Art style: {art_style}. "
         except Exception:
             pass
-        result["skin_tone"] = skin_tone
+    prompt = art_style_clause + _FACING_PROMPTS[facing]
+    image_data = await _xai_edit_async(xai_key, prompt, portrait_bytes)
+    ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"{entity_slug}_facing_{facing}_{ts}.jpg"
+    role = f"facing_{facing}"
+    return await _save_character_asset(project, entity, project_slug, image_data, filename, role)
 
-    return result
 
-
-@app.post("/projects/{project_slug}/entities/{entity_slug}/render-walk", status_code=201)
-async def render_walk(
+@app.post("/projects/{project_slug}/entities/{entity_slug}/generate-walk-frame", status_code=201)
+async def generate_walk_frame(
     project_slug: str,
     entity_slug: str,
-    gait: str = "shuffle",
+    facing: str,
+    frame: int,
     session: str | None = Cookie(default=None, alias=COOKIE_NAME),
 ):
-    import io as _io, math as _math, datetime as _dt
-    from PIL import Image as _Img, ImageOps as _IOps
-
-    if gait not in _GAIT_STYLES:
-        raise HTTPException(status_code=400, detail=f"gait must be one of {list(_GAIT_STYLES.keys())}")
+    import datetime as _dt
+    if facing not in ("front", "back", "left", "right"):
+        raise HTTPException(status_code=400, detail="facing must be front, back, left, or right")
+    if frame < 1 or frame > 8:
+        raise HTTPException(status_code=400, detail="frame must be 1-8")
     api_key_id, _ = _require_session(session)
     project = _project_for_session(project_slug, api_key_id)
     with db() as conn:
@@ -2444,189 +2218,55 @@ async def render_walk(
         ).fetchone()
     if not entity or entity["type"] != "character":
         raise HTTPException(status_code=404, detail="character entity not found")
-
-    # Load all part images - require at minimum head + torso + upper_leg + lower_leg + foot
-    required = {"head", "torso", "upper_leg", "lower_leg", "foot"}
-    parts: dict[str, _Img.Image] = {}
-    for pt in _PART_TYPES:
-        b = _get_part_bytes(project_slug, entity["id"], pt)
-        if b:
-            parts[pt] = _Img.open(_io.BytesIO(b)).convert("RGBA")
-        elif pt in required:
-            raise HTTPException(status_code=400, detail=f"missing required part: {pt}")
-
-    keyframes = _GAIT_STYLES[gait]
-    N_FRAMES = 8
-
-    # Canonical part dimensions: scale all parts relative to torso height
-    torso = parts["torso"]
-    tw, th = torso.size
-
-    # Frame canvas: 3x torso height tall, 2x torso width wide - generous padding
-    canvas_h = th * 3
-    canvas_w = tw * 2
-    # Torso root position (top of torso)
-    torso_root_x = canvas_w // 2
-    torso_root_y = canvas_h // 4
-
-    def _rotate_part(img: _Img.Image, angle_deg: float, pivot_frac: tuple) -> tuple:
-        """Rotate image around pivot_frac (fx, fy), return (rotated_img, new_pivot_px)."""
-        w, h = img.size
-        px = int(pivot_frac[0] * w)
-        py = int(pivot_frac[1] * h)
-        # Expand canvas so nothing is clipped during rotation
-        expanded = _Img.new("RGBA", (w * 3, h * 3), (0, 0, 0, 0))
-        expanded.paste(img, (w, h))
-        rotated = expanded.rotate(-angle_deg, center=(w + px, h + py), expand=False)
-        return rotated, (w + px, h + py)
-
-    def _paste_part(canvas: _Img.Image, part_img: _Img.Image, anchor_canvas: tuple,
-                    part_attach_frac: tuple) -> tuple:
-        """Paste part_img onto canvas so that part_attach_frac aligns with anchor_canvas.
-        Returns the part's child anchor in canvas coordinates."""
-        pw, ph = part_img.size
-        ax = int(part_attach_frac[0] * pw)
-        ay = int(part_attach_frac[1] * ph)
-        paste_x = anchor_canvas[0] - ax
-        paste_y = anchor_canvas[1] - ay
-        canvas.paste(part_img, (paste_x, paste_y), part_img)
-        return (paste_x, paste_y, pw, ph)
-
-    frames = []
-    for f in range(N_FRAMES):
-        kf = {k: v[f] for k, v in keyframes.items()}
-        canvas = _Img.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-
-        # Torso position with bob/sway
-        tx = torso_root_x + kf["torso_sway"]
-        ty = torso_root_y + kf["torso_bob"]
-        torso_img = parts["torso"]
-        tw2, th2 = torso_img.size
-        canvas.paste(torso_img, (tx - tw2 // 2, ty), torso_img)
-
-        # Compute anchor points on torso
-        shoulder_x = tx - tw2 // 2 + int(_TORSO_ANCHORS["shoulder"][0] * tw2)
-        shoulder_y = ty + int(_TORSO_ANCHORS["shoulder"][1] * th2)
-        hip_x = tx - tw2 // 2 + int(_TORSO_ANCHORS["hip"][0] * tw2)
-        hip_y = ty + int(_TORSO_ANCHORS["hip"][1] * th2)
-
-        # Helper: render a limb chain (upper -> lower -> end) from a root anchor
-        def _render_limb(upper_key, lower_key, end_key, upper_angle, lower_angle,
-                         end_angle, root_anchor, flip=False):
-            def _get(k):
-                p = parts.get(k)
-                if p is None:
-                    return None
-                return _IOps.mirror(p) if flip else p
-
-            upper = _get(upper_key)
-            if upper is None:
-                return
-            ur, upivot = _rotate_part(upper, upper_angle, _PART_PIVOTS[upper_key]["attach"])
-            bx, by, bw, bh = _paste_part(canvas, ur, root_anchor, _PART_PIVOTS[upper_key]["attach"])
-            # Child anchor of upper in canvas space
-            child_frac = _PART_PIVOTS[upper_key]["child"]
-            if child_frac is None:
-                return
-            upper_child = (bx + int(child_frac[0] * bw), by + int(child_frac[1] * bh))
-
-            lower = _get(lower_key)
-            if lower is None:
-                return
-            lr, _ = _rotate_part(lower, lower_angle, _PART_PIVOTS[lower_key]["attach"])
-            bx2, by2, bw2, bh2 = _paste_part(canvas, lr, upper_child, _PART_PIVOTS[lower_key]["attach"])
-            child_frac2 = _PART_PIVOTS[lower_key]["child"]
-            if child_frac2 is None or end_key not in parts:
-                return
-            lower_child = (bx2 + int(child_frac2[0] * bw2), by2 + int(child_frac2[1] * bh2))
-
-            end = _get(end_key)
-            if end is None:
-                return
-            er, _ = _rotate_part(end, end_angle, _PART_PIVOTS[end_key]["attach"])
-            _paste_part(canvas, er, lower_child, _PART_PIVOTS[end_key]["attach"])
-
-        # Z-order: far leg, far arm, torso (already drawn), near leg, near arm, head, hair, hands
-        # Far side (flipped, drawn first/behind)
-        _render_limb("upper_leg", "lower_leg", "foot",
-                     kf["far_upper_leg"], kf["far_lower_leg"], kf["far_foot"],
-                     (hip_x, hip_y), flip=True)
-        _render_limb("upper_arm", "lower_arm", "hand",
-                     kf["far_upper_arm"], kf["far_lower_arm"], 0,
-                     (shoulder_x, shoulder_y), flip=True)
-
-        # Torso already pasted; re-paste on top of far limbs
-        canvas.paste(torso_img, (tx - tw2 // 2, ty), torso_img)
-
-        # Near side
-        _render_limb("upper_leg", "lower_leg", "foot",
-                     kf["near_upper_leg"], kf["near_lower_leg"], kf["near_foot"],
-                     (hip_x, hip_y), flip=False)
-        _render_limb("upper_arm", "lower_arm", "hand",
-                     kf["near_upper_arm"], kf["near_lower_arm"], 0,
-                     (shoulder_x, shoulder_y), flip=False)
-
-        # Head
-        if "head" in parts:
-            head = parts["head"]
-            hw, hh = head.size
-            head_anchor = (tx - tw2 // 2 + int(0.5 * tw2), ty + kf["head_bob"])
-            hx = head_anchor[0] - hw // 2
-            hy = head_anchor[1] - hh
-            canvas.paste(head, (hx, hy), head)
-            # Hair on top of head
-            if "hair" in parts:
-                hair = parts["hair"]
-                harw, harh = hair.size
-                canvas.paste(hair, (hx + hw // 2 - harw // 2, hy - harh + int(0.1 * harh)), hair)
-
-        # Crop to tight bounding box with small padding
-        bbox = canvas.getbbox()
-        if bbox:
-            pad = 8
-            bbox = (max(0, bbox[0]-pad), max(0, bbox[1]-pad),
-                    min(canvas_w, bbox[2]+pad), min(canvas_h, bbox[3]+pad))
-            canvas = canvas.crop(bbox)
-
-        frames.append(canvas)
-
-    # Normalise all frames to same height (tallest frame), pad others
-    max_h = max(f.size[1] for f in frames)
-    max_w = max(f.size[0] for f in frames)
-    normalised = []
-    for fr in frames:
-        fw, fh = fr.size
-        if fw < max_w or fh < max_h:
-            padded = _Img.new("RGBA", (max_w, max_h), (0, 0, 0, 0))
-            padded.paste(fr, ((max_w - fw) // 2, max_h - fh))
-            normalised.append(padded)
-        else:
-            normalised.append(fr)
-
-    # Composite onto gray background
-    bg_color = (180, 180, 180)
-    final_frames = []
-    for fr in normalised:
-        bg = _Img.new("RGB", fr.size, bg_color)
-        bg.paste(fr, (0, 0), fr)
-        final_frames.append(bg)
-
-    # Build horizontal strip
-    sheet_w = max_w * N_FRAMES
-    sheet = _Img.new("RGB", (sheet_w, max_h), bg_color)
-    for i, fr in enumerate(final_frames):
-        sheet.paste(fr, (i * max_w, 0))
-
-    buf = _io.BytesIO()
-    sheet.save(buf, "JPEG", quality=90)
-    image_data = buf.getvalue()
-
+    xai_key = _load_secret("XAI_API_KEY")
+    if not xai_key:
+        raise HTTPException(status_code=500, detail="XAI_API_KEY not configured")
+    # Reference image: use facing asset if available, fall back to portrait
+    ref_role = "portrait" if facing == "front" else f"facing_{facing}"
+    ref_bytes = None
+    with db() as conn:
+        row = conn.execute(
+            "SELECT a.rel_path FROM assets a JOIN asset_entities ae ON ae.asset_id=a.id "
+            "WHERE ae.entity_id=%s AND ae.role=%s ORDER BY a.id LIMIT 1",
+            (entity["id"], ref_role),
+        ).fetchone()
+    if row:
+        p = _asset_dir(project_slug) / Path(row["rel_path"]).name
+        if p.exists():
+            ref_bytes = p.read_bytes()
+    if not ref_bytes:
+        ref_bytes = _get_portrait_bytes(project_slug, entity["id"])
+    if not ref_bytes:
+        raise HTTPException(status_code=400, detail="no reference image found - generate portrait or facing first")
+    art_style_clause = ""
+    with db() as conn:
+        game_row = conn.execute(
+            "SELECT slug FROM entities WHERE project_id=%s AND type='game'", (project["id"],)
+        ).fetchone()
+    if game_row:
+        try:
+            gpost = _read_entity_file(project_slug, game_row["slug"])
+            art_style = gpost.metadata.get("art_style", "").strip()
+            if art_style:
+                art_style_clause = f"Art style: {art_style}. "
+        except Exception:
+            pass
+    base = (
+        f"{art_style_clause}"
+        "The character from the reference image, full body, side profile. "
+        "Identical face, clothing, hair and proportions to reference. "
+        "Full body visible head to toe, no cropping. "
+        "Plain neutral light gray seamless background, studio lighting, no shadows. "
+        "No text, no logos. Professional 2D game sprite style. "
+        "EXACTLY TWO LEGS AND TWO ARMS. "
+    )
+    pose = _WALK_FRAME_POSES[frame - 1]
+    prompt = base + pose
+    image_data = await _xai_edit_async(xai_key, prompt, ref_bytes)
     ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filename = f"{entity_slug}_walk_{gait}_{ts}.jpg"
-    role = f"walk_sheet"
+    filename = f"{entity_slug}_walk_{facing}_{frame:02d}_{ts}.jpg"
+    role = f"walk_{facing}_frame_{frame}"
     return await _save_character_asset(project, entity, project_slug, image_data, filename, role)
-
-
 
 # ---------------------------------------------------------------------------
 # Static frontend (must be last - catch-all)
