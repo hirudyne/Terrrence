@@ -9,8 +9,9 @@ interface Connection {
 
 interface StartLocation {
   location: string
-  x: number
-  y: number
+  spot?: string    // slug of assigned spot (preferred over x/y)
+  x?: number      // legacy canvas coords - retained for items only
+  y?: number
 }
 
 export async function showSpotMap(
@@ -149,10 +150,32 @@ export async function showSpotMap(
     itemImageCache.set(item.slug, img ? api.assetFileUrl(projectSlug, img.id) : null)
   }))
 
+
+  // Returns the placed spot nearest to normalised (nx, ny), or null if none placed
+  const _nearestSpot = (nx: number, ny: number): typeof spots[0] | null => {
+    const placed = spots.filter(sp => {
+      const m = sp.detail.meta as Record<string, unknown>
+      return m['spot_x'] !== undefined && m['spot_x'] !== '' && m['spot_x'] !== null
+    })
+    if (!placed.length) return null
+    let best = placed[0]
+    let bestDist = Infinity
+    for (const sp of placed) {
+      const m = sp.detail.meta as Record<string, unknown>
+      const dx = (m['spot_x'] as number) - nx
+      const dy = (m['spot_y'] as number) - ny
+      const dist = dx * dx + dy * dy
+      if (dist < bestDist) { bestDist = dist; best = sp }
+    }
+    return best
+  }
+
   let _openPanel: string | null = null
 
   const _renderTray = () => {
-    tray.querySelectorAll('.spot-tray-card').forEach(c => c.remove())
+    tray.querySelectorAll('.spot-tray-card, .char-tray-card').forEach(c => c.remove())
+
+    // Unplaced spots
     for (const s of spots) {
       const meta = s.detail.meta as Record<string, unknown>
       const hasPos = meta['spot_x'] !== undefined && meta['spot_x'] !== '' && meta['spot_x'] !== null
@@ -165,6 +188,23 @@ export async function showSpotMap(
       card.dataset.slug = s.entity.slug
       card.ondragstart = (e) => {
         e.dataTransfer!.setData('text/plain', `spot:${s.entity.slug}`)
+        e.dataTransfer!.effectAllowed = 'move'
+      }
+      tray.appendChild(card)
+    }
+
+    // Characters not yet assigned to a spot
+    for (const ch of sceneChars) {
+      const sl = (ch.meta as Record<string, unknown>)?.['start_location'] as StartLocation | undefined
+      if (sl?.spot) continue  // already placed
+      const card = document.createElement('div')
+      card.className = 'char-tray-card'
+      card.textContent = ch.display_name
+      card.title = ch.slug
+      card.draggable = true
+      card.dataset.slug = ch.slug
+      card.ondragstart = (e) => {
+        e.dataTransfer!.setData('text/plain', `char:${ch.slug}`)
         e.dataTransfer!.effectAllowed = 'move'
       }
       tray.appendChild(card)
@@ -349,9 +389,13 @@ export async function showSpotMap(
     if (showChars) {
       for (const c of sceneChars) {
         const sl = (c.meta as Record<string, unknown>)?.['start_location'] as StartLocation | undefined
-        if (!sl) continue
-        const x = sl.x ?? 0.5
-        const y = sl.y ?? 0.5
+        if (!sl?.spot) continue  // unassigned - stays in tray
+        const assignedSpot = spots.find(sp => sp.entity.slug === sl.spot)
+        if (!assignedSpot) continue
+        const sm = assignedSpot.detail.meta as Record<string, unknown>
+        if (sm['spot_x'] === undefined || sm['spot_x'] === null || sm['spot_x'] === '') continue
+        const x = sm['spot_x'] as number
+        const y = sm['spot_y'] as number
         const imgUrl = charImageCache.get(c.slug) ?? null
 
         const card = document.createElement('div')
@@ -428,11 +472,14 @@ export async function showSpotMap(
       if (!c) return
       const sl = (c.meta as Record<string, unknown>)?.['start_location'] as StartLocation | undefined
       if (!sl) return
+      const nearest = _nearestSpot(nx, ny)
+      if (!nearest) return  // no placed spots to snap to
       try {
-        const updated = { location: sl.location, x: nx, y: ny }
+        const updated: StartLocation = { location: sl.location, spot: nearest.entity.slug }
         await api.updateEntityMeta(projectSlug, slug, { start_location: updated })
         ;(c.meta as Record<string, unknown>)['start_location'] = updated
         _renderCanvas()
+        _renderTray()
       } catch (err) { console.debug('[terrrence] char drag error', err) }
     }
   }

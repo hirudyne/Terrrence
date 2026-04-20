@@ -116,20 +116,18 @@ export class ScenePreview {
     const sd = this.sceneData!
     const ch = sd.characters.find(c => c.slug === charSlug)
     if (!ch) return null
-    const sl = ch.meta.start_location as { location?: string } | undefined
+    const sl = ch.meta.start_location as { location?: string; spot?: string } | undefined
     if (!sl || sl.location !== this.locationSlug) return null
-    const spots = sd.spots.filter(s => s.parent_slug === this.locationSlug)
-    return spots.length ? spots[0].slug : null
+    return sl.spot ?? null
   }
 
   private _defaultSpotForItem(itemSlug: string): string | null {
     const sd = this.sceneData!
     const it = sd.items.find(i => i.slug === itemSlug)
     if (!it) return null
-    const sl = it.meta.start_location as { location?: string } | undefined
+    const sl = it.meta.start_location as { location?: string; spot?: string } | undefined
     if (!sl || sl.location !== this.locationSlug) return null
-    const spots = sd.spots.filter(s => s.parent_slug === this.locationSlug)
-    return spots.length ? spots[0].slug : null
+    return sl.spot ?? null
   }
 
   // ---------------------------------------------------------------------------

@@ -596,6 +596,13 @@ html, body { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden;
   overflow: hidden; text-overflow: ellipsis;
 }
 .spot-tray-card:hover { border-color: #b5e48c; color: #b5e48c; }
+.char-tray-card {
+  background: var(--bg2); border: 1px dashed #f4a261;
+  border-radius: 3px; padding: 5px 7px; font-size: 0.75rem; color: #f4a261;
+  cursor: grab; user-select: none; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.char-tray-card:hover { border-color: #f4a261; background: rgba(244,162,97,0.1); }
 .spot-map-canvas-wrap { flex: 1 1 0; overflow: hidden; position: relative; }
 .spot-map-canvas {
   position: absolute; inset: 8px;

@@ -645,8 +645,9 @@ export class PreviewPane {
     slHeading.textContent = 'Start Location'
     wrap.appendChild(slHeading)
 
-    const startLocMeta = (detail.meta as Record<string, unknown>)?.['start_location'] as {location?: string; x?: number; y?: number} | undefined ?? {}
+    const startLocMeta = (detail.meta as Record<string, unknown>)?.['start_location'] as {location?: string; spot?: string} | undefined ?? {}
 
+    // Location dropdown
     const locRow = document.createElement('div')
     locRow.className = 'start-loc-row'
     const locSel = document.createElement('select')
@@ -665,47 +666,59 @@ export class PreviewPane {
     locRow.appendChild(locSel)
     wrap.appendChild(locRow)
 
-    const xyRow = document.createElement('div')
-    xyRow.className = 'start-loc-xy-row'
-    const mkXY = (label: string, key: 'x' | 'y') => {
-      const fieldWrap = document.createElement('div')
-      fieldWrap.className = 'start-loc-xy-field'
-      const lbl = document.createElement('label')
-      lbl.className = 'modal-field-label'
-      lbl.textContent = label
-      const inp = document.createElement('input')
-      inp.type = 'number'
-      inp.className = 'modal-input start-loc-xy-input'
-      inp.min = '0'; inp.max = '1'; inp.step = '0.01'
-      inp.value = startLocMeta[key] !== undefined ? String(startLocMeta[key]) : '0.5'
-      fieldWrap.appendChild(lbl)
-      fieldWrap.appendChild(inp)
-      xyRow.appendChild(fieldWrap)
-      return inp
-    }
-    const xInp = mkXY('X', 'x')
-    const yInp = mkXY('Y', 'y')
-    wrap.appendChild(xyRow)
+    // Spot dropdown - populated when a location is selected
+    const spotRow = document.createElement('div')
+    spotRow.className = 'start-loc-row'
+    const spotSel = document.createElement('select')
+    spotSel.className = 'modal-select'
+    spotRow.appendChild(spotSel)
+    wrap.appendChild(spotRow)
 
-    let _slTimer: ReturnType<typeof setTimeout> | null = null
-    const _save = () => {
-      if (_slTimer) clearTimeout(_slTimer)
-      _slTimer = setTimeout(async () => {
-        const locVal = locSel.value
-        if (!locVal) {
-          try { await api.updateEntityMeta(projectSlug, detail.slug, { start_location: '' }) } catch (_) {}
-          return
+    const _populateSpots = async (locationSlug: string, selectedSpot?: string) => {
+      spotSel.innerHTML = ''
+      if (!locationSlug) {
+        spotRow.style.display = 'none'
+        return
+      }
+      spotRow.style.display = ''
+      const noneOpt2 = document.createElement('option')
+      noneOpt2.value = ''
+      noneOpt2.textContent = '(no spot)'
+      spotSel.appendChild(noneOpt2)
+      try {
+        const allSpots = await api.listEntities(projectSlug, 'spot')
+        const locSpots = allSpots.filter(s => s.parent_slug === locationSlug)
+        for (const s of locSpots) {
+          const opt = document.createElement('option')
+          opt.value = s.slug
+          opt.textContent = s.display_name
+          if (s.slug === selectedSpot) opt.selected = true
+          spotSel.appendChild(opt)
         }
-        const x = Math.max(0, Math.min(1, parseFloat(xInp.value) || 0.5))
-        const y = Math.max(0, Math.min(1, parseFloat(yInp.value) || 0.5))
-        try {
-          await api.updateEntityMeta(projectSlug, detail.slug, { start_location: { location: locVal, x, y } })
-        } catch (e) { console.debug('[terrrence] start_location save error', e) }
-      }, 800)
+      } catch {}
     }
-    locSel.onchange = _save
-    xInp.oninput = _save
-    yInp.oninput = _save
+
+    // Initial population
+    _populateSpots(startLocMeta.location ?? '', startLocMeta.spot)
+
+    const _save = async () => {
+      const locVal = locSel.value
+      if (!locVal) {
+        try { await api.updateEntityMeta(projectSlug, detail.slug, { start_location: '' }) } catch (_) {}
+        return
+      }
+      const spotVal = spotSel.value || undefined
+      try {
+        await api.updateEntityMeta(projectSlug, detail.slug, { start_location: { location: locVal, spot: spotVal } })
+      } catch (e) { console.debug('[terrrence] start_location save error', e) }
+    }
+
+    locSel.onchange = async () => {
+      await _populateSpots(locSel.value)
+      _save()
+    }
+    spotSel.onchange = _save
+
     return wrap
   }
 
