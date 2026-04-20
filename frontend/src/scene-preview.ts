@@ -176,18 +176,20 @@ export class ScenePreview {
     this._renderControlBar()
   }
 
-  private _spotPos(spot: SceneSpot): { x: number; y: number } {
-    return {
-      x: (spot.meta.spot_x as number | undefined) ?? 0.5,
-      y: (spot.meta.spot_y as number | undefined) ?? 0.8,
-    }
+  private _spotPos(spot: SceneSpot): { x: number; y: number } | null {
+    const x = spot.meta.spot_x as number | undefined
+    const y = spot.meta.spot_y as number | undefined
+    if (x === undefined || x === null || y === undefined || y === null) return null
+    return { x, y }
   }
 
   private _renderSpot(spot: SceneSpot) {
+    const pos = this._spotPos(spot)
+    if (!pos) return  // unplaced - not shown in scene
     const blocked = this.worldState
       ? spotBlocked(spot.slug, this.worldState.firedEvents, this.sceneData!.events as EventEntity[])
       : false
-    const { x, y } = this._spotPos(spot)
+    const { x, y } = pos
     const hot = !!(spot.meta.hot)
 
     const el = document.createElement('div')
@@ -202,7 +204,9 @@ export class ScenePreview {
   private _renderCharacter(rt: RuntimeChar, spots: SceneSpot[]) {
     const spot = spots.find(s => s.slug === rt.currentSpot)
     if (!spot) return
-    const { x, y } = this._spotPos(spot)
+    const pos = this._spotPos(spot)
+    if (!pos) return
+    const { x, y } = pos
 
     const el = document.createElement('div')
     el.className = 'scene-char-sprite'
@@ -229,7 +233,9 @@ export class ScenePreview {
   private _renderItem(rt: RuntimeItem, spots: SceneSpot[]) {
     const spot = spots.find(s => s.slug === rt.currentSpot)
     if (!spot) return
-    const { x, y } = this._spotPos(spot)
+    const pos = this._spotPos(spot)
+    if (!pos) return
+    const { x, y } = pos
 
     const el = document.createElement('div')
     el.className = 'scene-item-sprite'
