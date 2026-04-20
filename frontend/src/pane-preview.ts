@@ -348,10 +348,11 @@ export class PreviewPane {
     const section = document.createElement('div')
     section.className = 'game-settings'
 
-    const heading = document.createElement('div')
-    heading.className = 'game-settings-heading'
-    heading.textContent = 'Art Style'
-    section.appendChild(heading)
+    // Art Style
+    const artHeading = document.createElement('div')
+    artHeading.className = 'game-settings-heading'
+    artHeading.textContent = 'Art Style'
+    section.appendChild(artHeading)
 
     const input = document.createElement('textarea')
     input.className = 'modal-input game-settings-input'
@@ -361,14 +362,14 @@ export class PreviewPane {
 
     const counter = document.createElement('div')
     counter.className = 'game-settings-counter'
-    const update = () => { counter.textContent = `${input.value.length} / ${MAX}` }
-    update()
+    const updateCounter = () => { counter.textContent = `${input.value.length} / ${MAX}` }
+    updateCounter()
 
-    let saveTimer: ReturnType<typeof setTimeout> | null = null
+    let artTimer: ReturnType<typeof setTimeout> | null = null
     input.oninput = () => {
-      update()
-      if (saveTimer) clearTimeout(saveTimer)
-      saveTimer = setTimeout(async () => {
+      updateCounter()
+      if (artTimer) clearTimeout(artTimer)
+      artTimer = setTimeout(async () => {
         try {
           await api.updateEntityMeta(projectSlug, detail.slug, { art_style: input.value.trim() })
           console.debug('[terrrence] art_style saved', input.value)
@@ -380,6 +381,59 @@ export class PreviewPane {
 
     section.appendChild(input)
     section.appendChild(counter)
+
+    // Player Character
+    const pcHeading = document.createElement('div')
+    pcHeading.className = 'game-settings-heading'
+    pcHeading.textContent = 'Player Character'
+    section.appendChild(pcHeading)
+
+    const pcSelect = document.createElement('select')
+    pcSelect.className = 'modal-input game-settings-input'
+    pcSelect.disabled = true
+    const pcPlaceholder = document.createElement('option')
+    pcPlaceholder.value = ''
+    pcPlaceholder.textContent = 'Loading...'
+    pcSelect.appendChild(pcPlaceholder)
+    section.appendChild(pcSelect)
+
+    const currentPc = (detail.meta as Record<string, string>)?.['player_character'] ?? ''
+
+    api.listEntities(projectSlug, 'character').then(chars => {
+      pcSelect.innerHTML = ''
+      const blank = document.createElement('option')
+      blank.value = ''
+      blank.textContent = '- none -'
+      pcSelect.appendChild(blank)
+      for (const c of chars) {
+        const opt = document.createElement('option')
+        opt.value = c.slug
+        opt.textContent = c.display_name
+        if (c.slug === currentPc) opt.selected = true
+        pcSelect.appendChild(opt)
+      }
+      // Default to first character if none set
+      if (!currentPc && chars.length > 0) {
+        pcSelect.value = chars[0].slug
+        api.updateEntityMeta(projectSlug, detail.slug, { player_character: chars[0].slug })
+          .catch(e => console.debug('[terrrence] player_character default save error', e))
+      }
+      pcSelect.disabled = false
+    }).catch(e => {
+      console.debug('[terrrence] failed to load characters for PC selector', e)
+      pcSelect.disabled = false
+    })
+
+    pcSelect.onchange = async () => {
+      const val = pcSelect.value
+      try {
+        await api.updateEntityMeta(projectSlug, detail.slug, { player_character: val || '' })
+        console.debug('[terrrence] player_character saved', val)
+      } catch (e) {
+        console.debug('[terrrence] player_character save error', e)
+      }
+    }
+
     return section
   }
 
