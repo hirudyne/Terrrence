@@ -3,7 +3,6 @@ import { api, Asset } from './api'
 const FACINGS = ['front', 'left', 'right', 'back'] as const
 type Facing = typeof FACINGS[number]
 const FACING_LABELS: Record<Facing, string> = { front: 'Front', left: 'Left', right: 'Right', back: 'Back' }
-const GAITS = ['shuffle', 'stride', 'jog', 'waddle']
 const N_FRAMES = 8
 
 const facingRole  = (f: Facing) => f === 'front' ? 'portrait' : `facing_${f}`
@@ -136,19 +135,6 @@ export async function showCharacterDetails(
     const renderRow = document.createElement('div')
     renderRow.className = 'char-details-render-controls'
 
-    const gaitLabel = document.createElement('label')
-    gaitLabel.className = 'char-details-render-label'
-    gaitLabel.textContent = 'Gait: '
-    const gaitSel = document.createElement('select')
-    gaitSel.className = 'char-details-render-select'
-    for (const g of GAITS) {
-      const opt = document.createElement('option')
-      opt.value = g; opt.textContent = g.charAt(0).toUpperCase() + g.slice(1)
-      gaitSel.appendChild(opt)
-    }
-    gaitLabel.appendChild(gaitSel)
-    renderRow.appendChild(gaitLabel)
-
     const renderBtn = document.createElement('button')
     renderBtn.className = 'char-details-btn char-details-btn--render'
     renderBtn.textContent = 'Render'
@@ -238,7 +224,7 @@ export async function showCharacterDetails(
       _stopPlayer()
       renderBtn.disabled = true; renderBtn.textContent = 'Rendering...'; renderErr.textContent = ''
       try {
-        const result = await api.renderWalk(projectSlug, characterSlug, gaitSel.value, facing)
+        const result = await api.renderWalk(projectSlug, characterSlug, facing)
         for (const fr of result.frames) { if (fr.role) byRole.set(fr.role, fr) }
         _loadFrames(result.frames)
       } catch (e: any) {

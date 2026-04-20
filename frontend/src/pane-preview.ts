@@ -493,6 +493,35 @@ export class PreviewPane {
     puppetHeading.textContent = 'Puppet Walk'
     section.appendChild(puppetHeading)
 
+    const _patchMeta = (key: string, value: unknown) =>
+      fetch(`/projects/${projectSlug}/entities/${detail.slug}`, {
+        method: 'PATCH', credentials: 'include',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ meta: { [key]: value } })
+      })
+
+    // Gait selector
+    const gaitRow = document.createElement('div')
+    gaitRow.className = 'char-settings-row'
+    const gaitLabel = document.createElement('label')
+    gaitLabel.className = 'char-settings-label'
+    gaitLabel.textContent = 'Gait: '
+    const gaitSel = document.createElement('select')
+    gaitSel.className = 'char-details-render-select'
+    const currentGait = String((detail.meta as Record<string,unknown>)?.gait_style ?? 'shuffle')
+    for (const g of ['shuffle','stride','jog','waddle','custom']) {
+      const opt = document.createElement('option')
+      opt.value = g; opt.textContent = g.charAt(0).toUpperCase() + g.slice(1)
+      if (g === currentGait) opt.selected = true
+      gaitSel.appendChild(opt)
+    }
+    gaitLabel.appendChild(gaitSel)
+    gaitRow.appendChild(gaitLabel)
+    section.appendChild(gaitRow)
+
+    // Custom controls - pivot and angle, only enabled when gait === 'custom'
+    const isCustom = () => gaitSel.value === 'custom'
+
     const pivotRow = document.createElement('div')
     pivotRow.className = 'char-settings-row'
     const pivotLabel = document.createElement('label')
@@ -502,18 +531,13 @@ export class PreviewPane {
     pivotInput.type = 'number'; pivotInput.min = '0.1'; pivotInput.max = '0.99'; pivotInput.step = '0.01'
     pivotInput.className = 'char-settings-input'
     pivotInput.value = String((detail.meta as Record<string,unknown>)?.puppet_pivot ?? 0.667)
+    pivotInput.disabled = !isCustom()
     let _pivotTimer: ReturnType<typeof setTimeout> | null = null
     pivotInput.oninput = () => {
       if (_pivotTimer) clearTimeout(_pivotTimer)
       _pivotTimer = setTimeout(async () => {
         const v = parseFloat(pivotInput.value)
-        if (!isNaN(v) && v >= 0.1 && v <= 0.99) {
-          await fetch(`/projects/${projectSlug}/entities/${detail.slug}`, {
-            method: 'PATCH', credentials: 'include',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ meta: { puppet_pivot: v } })
-          })
-        }
+        if (!isNaN(v) && v >= 0.1 && v <= 0.99) await _patchMeta('puppet_pivot', v)
       }, 800)
     }
     pivotLabel.appendChild(pivotInput)
@@ -530,22 +554,24 @@ export class PreviewPane {
     angleInput.className = 'char-settings-input'
     angleInput.value = String((detail.meta as Record<string,unknown>)?.puppet_max_angle ?? '')
     angleInput.placeholder = 'gait default'
+    angleInput.disabled = !isCustom()
     let _angleTimer: ReturnType<typeof setTimeout> | null = null
     angleInput.oninput = () => {
       if (_angleTimer) clearTimeout(_angleTimer)
       _angleTimer = setTimeout(async () => {
         const raw = angleInput.value.trim()
-        const meta: Record<string,unknown> = raw === '' ? { puppet_max_angle: '' } : { puppet_max_angle: parseInt(raw) }
-        await fetch(`/projects/${projectSlug}/entities/${detail.slug}`, {
-          method: 'PATCH', credentials: 'include',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ meta })
-        })
+        await _patchMeta('puppet_max_angle', raw === '' ? '' : parseInt(raw))
       }, 800)
     }
     angleLabel.appendChild(angleInput)
     angleRow.appendChild(angleLabel)
     section.appendChild(angleRow)
+
+    gaitSel.onchange = async () => {
+      pivotInput.disabled = !isCustom()
+      angleInput.disabled = !isCustom()
+      await _patchMeta('gait_style', gaitSel.value)
+    }
 
     // Start location
     section.appendChild(this._renderStartLocationFields(detail, projectSlug, locations))

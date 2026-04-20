@@ -119,8 +119,8 @@ export const api = {
     req<Asset>('POST', `/projects/${project}/entities/${entity}/generate-facing?facing=${facing}`),
   generateWalkFrame: (project: string, entity: string, facing: string, frame: number) =>
     req<Asset>('POST', `/projects/${project}/entities/${entity}/generate-walk-frame?facing=${facing}&frame=${frame}`),
-  renderWalk: (project: string, entity: string, gait: string, facing: string) =>
-    req<{frames: Asset[], frame_w: number, frame_h: number, n: number}>('POST', `/projects/${project}/entities/${entity}/render-walk?gait=${gait}&facing=${facing}`),
+  renderWalk: (project: string, entity: string, facing: string) =>
+    req<{frames: Asset[], frame_w: number, frame_h: number, n: number}>('POST', `/projects/${project}/entities/${entity}/render-walk?facing=${facing}`),
   renameEntity: (project: string, slug: string, display_name: string) =>
     req<Entity & { slug: string }>('POST', `/projects/${project}/entities/${slug}/rename`, { display_name }),
 }

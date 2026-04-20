@@ -2324,15 +2324,12 @@ def _get_facing_bytes(project_slug: str, entity_id: int, facing: str) -> bytes |
 async def render_walk(
     project_slug: str,
     entity_slug: str,
-    gait: str = "shuffle",
     facing: str = "left",
     session: str | None = Cookie(default=None, alias=COOKIE_NAME),
 ):
     import io as _io, math as _math, datetime as _dt, hashlib as _hl
     from PIL import Image as _Img
 
-    if gait not in _PUPPET_GAITS:
-        raise HTTPException(status_code=400, detail=f"gait must be one of {list(_PUPPET_GAITS.keys())}")
     if facing not in ("front", "left", "right", "back"):
         raise HTTPException(status_code=400, detail="facing must be front, left, right, or back")
 
@@ -2348,6 +2345,10 @@ async def render_walk(
 
     # Read per-character puppet settings from frontmatter
     post = _read_entity_file(project_slug, entity_slug)
+    gait = str(post.metadata.get("gait_style", "shuffle")).strip()
+    # 'custom' uses the manual angle override; treat as shuffle base angles
+    if gait not in _PUPPET_GAITS:
+        gait = "shuffle"
     pivot_frac = float(post.metadata.get("puppet_pivot", 0.667))
     max_angle_override = post.metadata.get("puppet_max_angle", None)
     pivot_frac = max(0.1, min(0.99, pivot_frac))
