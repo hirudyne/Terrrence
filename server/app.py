@@ -2268,6 +2268,231 @@ async def generate_walk_frame(
     role = f"walk_{facing}_frame_{frame}"
     return await _save_character_asset(project, entity, project_slug, image_data, filename, role)
 
+
+# ---------------------------------------------------------------------------
+# Procedural walk cycle rendering (rocking puppet animation)
+# ---------------------------------------------------------------------------
+
+_PUPPET_GAITS = {
+    # (angles_deg x8, squash_factors x8)
+    # angles: positive = lean forward, negative = lean back
+    # squash: <1 = squash (plant), >1 = stretch (swing)
+    "shuffle": {
+        "angles":  [ 0,  4,  7,  4,  0, -4, -7, -4],
+        "squash":  [1.0, 0.97, 0.95, 0.97, 1.0, 0.97, 0.95, 0.97],
+    },
+    "stride": {
+        "angles":  [ 0,  8, 13,  8,  0, -8,-13, -8],
+        "squash":  [1.0, 0.95, 0.92, 0.95, 1.0, 0.95, 0.92, 0.95],
+    },
+    "jog": {
+        "angles":  [ 0, 11, 17, 11,  0,-11,-17,-11],
+        "squash":  [1.0, 0.93, 0.88, 0.93, 1.0, 0.93, 0.88, 0.93],
+    },
+    "waddle": {
+        "angles":  [ 0,  5,  9,  5,  0, -5, -9, -5],
+        "squash":  [1.0, 0.98, 0.96, 0.98, 1.0, 0.98, 0.96, 0.98],
+    },
+}
+
+
+def _remove_background(image_bytes: bytes) -> "PIL.Image.Image":
+    """Run rembg on image bytes, return RGBA PIL image with background removed."""
+    import io as _io
+    from PIL import Image as _Img
+    from rembg import remove as _rembg_remove
+    img = _Img.open(_io.BytesIO(image_bytes)).convert("RGBA")
+    return _rembg_remove(img)
+
+
+def _get_facing_bytes(project_slug: str, entity_id: int, facing: str) -> bytes | None:
+    role = "portrait" if facing == "front" else f"facing_{facing}"
+    with db() as conn:
+        row = conn.execute(
+            "SELECT a.rel_path FROM assets a JOIN asset_entities ae ON ae.asset_id=a.id "
+            "WHERE ae.entity_id=%s AND ae.role=%s ORDER BY a.id DESC LIMIT 1",
+            (entity_id, role),
+        ).fetchone()
+    if not row:
+        return None
+    path = _asset_dir(project_slug) / Path(row["rel_path"]).name
+    return path.read_bytes() if path.exists() else None
+
+
+@app.post("/projects/{project_slug}/entities/{entity_slug}/render-walk", status_code=201)
+async def render_walk(
+    project_slug: str,
+    entity_slug: str,
+    gait: str = "shuffle",
+    facing: str = "left",
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    import io as _io, math as _math, datetime as _dt, hashlib as _hl
+    from PIL import Image as _Img
+
+    if gait not in _PUPPET_GAITS:
+        raise HTTPException(status_code=400, detail=f"gait must be one of {list(_PUPPET_GAITS.keys())}")
+    if facing not in ("front", "left", "right", "back"):
+        raise HTTPException(status_code=400, detail="facing must be front, left, right, or back")
+
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+    with db() as conn:
+        entity = conn.execute(
+            "SELECT id, type, display_name FROM entities WHERE project_id=%s AND slug=%s",
+            (project["id"], entity_slug),
+        ).fetchone()
+    if not entity or entity["type"] != "character":
+        raise HTTPException(status_code=404, detail="character entity not found")
+
+    # Load facing image
+    facing_bytes = _get_facing_bytes(project_slug, entity["id"], facing)
+    if not facing_bytes:
+        raise HTTPException(status_code=400, detail=f"no {facing} facing image found - generate it first")
+
+    # Check for cached transparent version
+    transparent_role = f"facing_{facing}_transparent"
+    transparent_img = None
+    with db() as conn:
+        row = conn.execute(
+            "SELECT a.rel_path FROM assets a JOIN asset_entities ae ON ae.asset_id=a.id "
+            "WHERE ae.entity_id=%s AND ae.role=%s ORDER BY a.id DESC LIMIT 1",
+            (entity["id"], transparent_role),
+        ).fetchone()
+    if row:
+        p = _asset_dir(project_slug) / Path(row["rel_path"]).name
+        if p.exists():
+            transparent_img = _Img.open(_io.BytesIO(p.read_bytes())).convert("RGBA")
+
+    # Run rembg if no cached version
+    if transparent_img is None:
+        transparent_img = await asyncio.get_event_loop().run_in_executor(
+            None, _remove_background, facing_bytes
+        )
+        # Save transparent PNG as cached asset
+        buf = _io.BytesIO()
+        transparent_img.save(buf, "PNG")
+        png_bytes = buf.getvalue()
+        ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        tr_filename = f"{entity_slug}_facing_{facing}_transparent_{ts}.png"
+        tr_path = _asset_dir(project_slug) / tr_filename
+        tr_path.write_bytes(png_bytes)
+        sha = _hl.sha256(png_bytes).hexdigest()
+        with db() as conn:
+            cur = conn.execute(
+                "INSERT INTO assets (project_id, rel_path, mime, bytes, sha256, source) "
+                "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+                (project["id"], f"assets/{tr_filename}", "image/png",
+                 len(png_bytes), sha, "generated"),
+            )
+            tr_asset_id = cur.fetchone()["id"]
+            conn.execute(
+                "INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (%s,%s,%s) "
+                "ON CONFLICT (asset_id, entity_id) DO UPDATE SET role=EXCLUDED.role",
+                (tr_asset_id, entity["id"], transparent_role),
+            )
+
+    # Tight-crop to content bounding box
+    bbox = transparent_img.getbbox()
+    if not bbox:
+        raise HTTPException(status_code=422, detail="background removal produced empty image")
+    sprite = transparent_img.crop(bbox)
+    sw, sh = sprite.size
+
+    # Pivot point: centre-x, two-thirds down
+    pivot_x = sw * 0.5
+    pivot_y = sh * (2.0 / 3.0)
+
+    kf = _PUPPET_GAITS[gait]
+    N_FRAMES = 8
+    BG_COLOR = (180, 180, 180)
+
+    # Determine max canvas needed across all frames so all frames are same size
+    # Rotate a bounding box to find worst-case extents
+    def _rotated_extent(w, h, px, py, angle_deg):
+        """Return (width, height) of bounding box after rotating w x h image around (px, py)."""
+        a = _math.radians(angle_deg)
+        corners = [(0,0),(w,0),(w,h),(0,h)]
+        rotated = [
+            ((cx - px) * _math.cos(a) - (cy - py) * _math.sin(a) + px,
+             (cx - px) * _math.sin(a) + (cy - py) * _math.cos(a) + py)
+            for cx, cy in corners
+        ]
+        xs = [p[0] for p in rotated]
+        ys = [p[1] for p in rotated]
+        return _math.ceil(max(xs) - min(xs)), _math.ceil(max(ys) - min(ys))
+
+    max_angle = max(abs(a) for a in kf["angles"])
+    max_cw, max_ch_rot = _rotated_extent(sw, sh, pivot_x, pivot_y, max_angle)
+    # Also account for squash (height can shrink, never grows beyond sh)
+    # Add generous padding
+    pad = 20
+    frame_w = max_cw + pad * 2
+    frame_h = max(sh, max_ch_rot) + pad * 2
+
+    frames = []
+    for f in range(N_FRAMES):
+        angle = kf["angles"][f]
+        squash = kf["squash"][f]
+
+        # Apply squash/stretch around pivot (scale y relative to pivot_y)
+        if abs(squash - 1.0) > 0.001:
+            new_sh = int(sh * squash)
+            # Scale the sprite vertically
+            scaled = sprite.resize((sw, new_sh), _Img.LANCZOS)
+            # Adjust pivot y proportionally
+            eff_pivot_y = pivot_y * squash
+        else:
+            scaled = sprite
+            eff_pivot_y = pivot_y
+
+        # Rotate around pivot on an expanded canvas
+        exp_w, exp_h = scaled.size[0] * 3, scaled.size[1] * 3
+        expanded = _Img.new("RGBA", (exp_w, exp_h), (0, 0, 0, 0))
+        off_x, off_y = scaled.size[0], scaled.size[1]
+        expanded.paste(scaled, (off_x, off_y))
+        rotated = expanded.rotate(
+            -angle,
+            center=(off_x + pivot_x, off_y + eff_pivot_y),
+            expand=False,
+            resample=_Img.BICUBIC,
+        )
+
+        # Crop the region around where the sprite ended up
+        crop_cx = off_x + pivot_x
+        crop_cy = off_y + eff_pivot_y
+        x0 = int(crop_cx - frame_w / 2)
+        y0 = int(crop_cy - eff_pivot_y - pad)
+        x1 = x0 + frame_w
+        y1 = y0 + frame_h
+        # Clamp to expanded canvas
+        x0c = max(0, x0); y0c = max(0, y0)
+        x1c = min(exp_w, x1); y1c = min(exp_h, y1)
+        cropped = rotated.crop((x0c, y0c, x1c, y1c))
+
+        # Composite onto bg
+        bg = _Img.new("RGB", (frame_w, frame_h), BG_COLOR)
+        # Paste at offset in case we had to clamp
+        paste_x = x0c - x0
+        paste_y = y0c - y0
+        bg.paste(cropped, (paste_x, paste_y), cropped)
+        frames.append(bg)
+
+    # Build horizontal strip
+    sheet = _Img.new("RGB", (frame_w * N_FRAMES, frame_h), BG_COLOR)
+    for i, fr in enumerate(frames):
+        sheet.paste(fr, (i * frame_w, 0))
+
+    buf = _io.BytesIO()
+    sheet.save(buf, "JPEG", quality=90)
+    image_data = buf.getvalue()
+
+    ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"{entity_slug}_walk_{gait}_{facing}_{ts}.jpg"
+    return await _save_character_asset(
+        project, entity, project_slug, image_data, filename, "walk_sheet"
+    )
+
 # ---------------------------------------------------------------------------
 # Static frontend (must be last - catch-all)
 # ---------------------------------------------------------------------------

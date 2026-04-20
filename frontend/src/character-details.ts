@@ -296,6 +296,96 @@ export async function showCharacterDetails(
     section.appendChild(facingRow)
     body.appendChild(section)
   }
+
+  // Render walk cycle section
+  const renderSection = document.createElement('div')
+  renderSection.className = 'char-details-section'
+
+  const renderHdr = document.createElement('div')
+  renderHdr.className = 'char-details-section-hdr'
+  renderHdr.textContent = 'Walk Cycle (Puppet)'
+  renderSection.appendChild(renderHdr)
+
+  const renderControls = document.createElement('div')
+  renderControls.className = 'char-details-render-controls'
+
+  const gaitLabel = document.createElement('label')
+  gaitLabel.className = 'char-details-render-label'
+  gaitLabel.textContent = 'Gait: '
+  const gaitSel = document.createElement('select')
+  gaitSel.className = 'char-details-render-select'
+  for (const g of ['shuffle','stride','jog','waddle']) {
+    const opt = document.createElement('option')
+    opt.value = g
+    opt.textContent = g.charAt(0).toUpperCase() + g.slice(1)
+    gaitSel.appendChild(opt)
+  }
+  gaitLabel.appendChild(gaitSel)
+  renderControls.appendChild(gaitLabel)
+
+  const facingLabel = document.createElement('label')
+  facingLabel.className = 'char-details-render-label'
+  facingLabel.textContent = 'Facing: '
+  const facingSel = document.createElement('select')
+  facingSel.className = 'char-details-render-select'
+  for (const f of ['front','left','right','back']) {
+    const opt = document.createElement('option')
+    opt.value = f
+    opt.textContent = f.charAt(0).toUpperCase() + f.slice(1)
+    if (f === 'left') opt.selected = true
+    facingSel.appendChild(opt)
+  }
+  facingLabel.appendChild(facingSel)
+  renderControls.appendChild(facingLabel)
+
+  const renderBtn = document.createElement('button')
+  renderBtn.className = 'char-details-btn char-details-btn--render'
+  renderBtn.textContent = 'Render'
+  renderControls.appendChild(renderBtn)
+
+  const renderErr = document.createElement('span')
+  renderErr.className = 'char-details-render-err'
+  renderControls.appendChild(renderErr)
+
+  renderSection.appendChild(renderControls)
+
+  const sheetWrap = document.createElement('div')
+  sheetWrap.className = 'char-details-sheet-wrap'
+  const existingSheet = byRole.get('walk_sheet')
+  if (existingSheet) {
+    const img = document.createElement('img')
+    img.src = api.assetFileUrl(projectSlug, existingSheet.id)
+    img.className = 'char-details-walk-sheet-img'
+    sheetWrap.appendChild(img)
+  } else {
+    sheetWrap.classList.add('char-details-sheet-wrap--empty')
+    sheetWrap.textContent = 'No walk cycle rendered yet.'
+  }
+  renderSection.appendChild(sheetWrap)
+
+  renderBtn.addEventListener('click', async () => {
+    renderBtn.disabled = true
+    renderBtn.textContent = 'Rendering...'
+    renderErr.textContent = ''
+    try {
+      const result = await api.renderWalk(projectSlug, characterSlug, gaitSel.value, facingSel.value)
+      byRole.set('walk_sheet', result)
+      sheetWrap.innerHTML = ''
+      sheetWrap.classList.remove('char-details-sheet-wrap--empty')
+      const img = document.createElement('img')
+      img.src = api.assetFileUrl(projectSlug, result.id)
+      img.className = 'char-details-walk-sheet-img'
+      sheetWrap.appendChild(img)
+    } catch (e: any) {
+      renderErr.textContent = e?.message ?? 'Render failed'
+      renderBtn.textContent = 'Render'
+    }
+    renderBtn.disabled = false
+    renderBtn.textContent = 'Render'
+  })
+
+  body.appendChild(renderSection)
+
 }
 
 // ---------------------------------------------------------------------------

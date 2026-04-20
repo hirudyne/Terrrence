@@ -848,3 +848,22 @@ html, body { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden;
   font-size: 0.72rem; padding: 2px 8px; border-radius: 3px; cursor: pointer; float: right;
 }
 .asset-btn--details:hover { background: var(--accent); color: var(--bg); }
+.char-details-render-controls {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0;
+}
+.char-details-render-label {
+  font-size: 0.8rem; color: var(--text); display: flex; align-items: center; gap: 5px;
+}
+.char-details-render-select {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  font-size: 0.8rem; padding: 3px 6px; border-radius: 2px;
+}
+.char-details-btn--render { font-size: 0.8rem; padding: 4px 12px; }
+.char-details-render-err { font-size: 0.75rem; color: #e06c75; }
+.char-details-sheet-wrap {
+  border: 1px solid var(--border); border-radius: 2px; background: var(--bg);
+  min-height: 60px; display: flex; align-items: center; justify-content: center;
+  overflow-x: auto; padding: 4px;
+}
+.char-details-sheet-wrap--empty { color: var(--text-dim); font-size: 0.75rem; }
+.char-details-walk-sheet-img { height: 140px; width: auto; display: block; }
