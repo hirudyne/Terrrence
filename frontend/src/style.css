@@ -811,63 +811,19 @@ html, body { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden;
 .char-details-btn:disabled { opacity: 0.5; cursor: default; }
 .char-details-btn--secondary { color: var(--text-dim); }
 .char-details-btn--walk-gen { margin-top: 6px; width: auto; }
-.char-details-walk-wrap { flex: 1 1 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.char-details-player {
-  display: flex; gap: 10px; align-items: flex-start;
+.char-details-puppet-wrap { flex: 1 1 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.char-details-puppet-player {
+  display: flex; gap: 12px; align-items: flex-end;
   background: var(--bg2); border: 1px solid var(--border); border-radius: 3px; padding: 8px;
 }
-.char-details-player--empty {
-  color: var(--text-dim); font-size: 0.75rem; padding: 8px;
+.char-details-puppet-canvas {
+  border: 1px solid var(--border); border-radius: 2px; background: #b4b4b4;
+  image-rendering: auto;
 }
-.char-details-player-img { height: 160px; width: auto; display: block; border-radius: 2px; }
-.char-details-player-controls { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
-.char-details-player-label { font-size: 0.7rem; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
-.char-details-fps-input {
-  width: 44px; background: var(--bg); border: 1px solid var(--border);
-  color: var(--text); font-size: 0.75rem; padding: 2px 4px; border-radius: 2px;
-}
-.char-details-scrub { width: 140px; cursor: pointer; }
-.char-details-btn--play { width: auto; }
-.char-details-frames-row { display: flex; gap: 4px; flex-wrap: wrap; }
-.char-details-frame-slot {
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
-}
-.char-details-frame-thumb {
-  width: 64px; height: 88px; border: 1px solid var(--border);
-  border-radius: 2px; background: var(--bg2); overflow: hidden;
-  display: flex; align-items: center; justify-content: center;
-}
-.char-details-frame-thumb--empty { color: var(--text-dim); font-size: 0.6rem; }
-.char-details-frame-thumb img { width: 100%; height: 100%; object-fit: contain; }
-.char-details-frame-label { font-size: 0.65rem; color: var(--text-dim); }
-.char-details-frame-btn {
-  background: none; border: 1px solid var(--border); color: var(--text-dim);
-  font-size: 0.65rem; padding: 1px 5px; border-radius: 2px; cursor: pointer; width: 64px;
-}
-.char-details-frame-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-/* ---- Character Assets button in preview ---- */
-.asset-btn--details {
-  background: none; border: 1px solid var(--accent); color: var(--accent);
-  font-size: 0.72rem; padding: 2px 8px; border-radius: 3px; cursor: pointer; float: right;
-}
-.asset-btn--details:hover { background: var(--accent); color: var(--bg); }
-.char-details-render-controls {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0;
-}
-.char-details-render-label {
-  font-size: 0.8rem; color: var(--text); display: flex; align-items: center; gap: 5px;
-}
-.char-details-render-select {
-  background: var(--bg); border: 1px solid var(--border); color: var(--text);
-  font-size: 0.8rem; padding: 3px 6px; border-radius: 2px;
-}
-.char-details-btn--render { font-size: 0.8rem; padding: 4px 12px; }
-.char-details-render-err { font-size: 0.75rem; color: #e06c75; }
 .char-details-sheet-wrap {
-  border: 1px solid var(--border); border-radius: 2px; background: var(--bg);
-  min-height: 60px; display: flex; align-items: center; justify-content: center;
-  overflow-x: auto; padding: 4px;
+  overflow-x: auto; border: 1px solid var(--border); border-radius: 3px;
+  background: var(--bg2); padding: 4px; min-height: 32px;
+  display: flex; align-items: center;
 }
-.char-details-sheet-wrap--empty { color: var(--text-dim); font-size: 0.75rem; }
-.char-details-walk-sheet-img { height: 140px; width: auto; display: block; }
+.char-details-sheet-wrap--empty { color: var(--text-dim); font-size: 0.75rem; padding: 8px; }
+.char-details-walk-sheet-img { height: 80px; width: auto; display: block; }
