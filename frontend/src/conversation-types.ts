@@ -1,134 +1,67 @@
 // Shared types for conversation schema
 
 export interface ConvLine {
-  speaker: string   // ##CharName## token
+  id: string
+  speaker: string            // ##CharName## token
   text: string
   audio: number | null
-}
-
-export interface ConvOption {
-  id: string
-  label: string
-  prerequisite: string | null
-  triggers: string | null
-  lines: ConvLine[]
-  response_menu: ConvOption[]
-}
-
-export interface ConvGreeting {
-  id: string
-  prerequisite: string | null
-  lines: ConvLine[]
+  prerequisite: string | null  // event slug - line hidden until fired
+  blocker: string | null       // event slug - line hidden after fired
+  triggers: string | null      // event slug - fired when this line is said
+  next: ConvLine[]             // >1 available = menu; 1 = auto-advance; 0 = end
 }
 
 export interface ConvData {
-  greetings: ConvGreeting[]
-  menu: ConvOption[]
+  lines: ConvLine[]
 }
 
 export function emptyConvData(): ConvData {
-  return { greetings: [], menu: [] }
+  return { lines: [] }
+}
+
+export function emptyLine(id: string): ConvLine {
+  return { id, speaker: '', text: '', audio: null, prerequisite: null, blocker: null, triggers: null, next: [] }
 }
 
 // --- ID generation ---
-// Derive a slug from label, then suffix _001, _002 etc. to ensure uniqueness
-export function deriveConvId(label: string, existing: string[]): string {
-  const base = label.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'item'
+export function deriveConvId(base: string, existing: string[]): string {
+  const slug = base.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'line'
   let n = 1
-  let candidate = `${base}_${String(n).padStart(3, '0')}`
-  while (existing.includes(candidate)) {
-    n++
-    candidate = `${base}_${String(n).padStart(3, '0')}`
-  }
+  let candidate = `${slug}_${String(n).padStart(3, '0')}`
+  while (existing.includes(candidate)) { n++; candidate = `${slug}_${String(n).padStart(3, '0')}` }
   return candidate
 }
 
-export function allIds(data: ConvData): string[] {
+export function allIds(lines: ConvLine[]): string[] {
   const ids: string[] = []
-  for (const g of data.greetings) ids.push(g.id)
-  function collectOpt(opts: ConvOption[]) {
-    for (const o of opts) { ids.push(o.id); collectOpt(o.response_menu) }
+  function collect(ls: ConvLine[]) {
+    for (const l of ls) { ids.push(l.id); collect(l.next) }
   }
-  collectOpt(data.menu)
+  collect(lines)
   return ids
 }
 
-// --- YAML serialisation (minimal, no external dep) ---
-function yamlStr(s: string): string {
-  if (!s) return '""'
-  if (/[:{}\[\],&*#?|<>=!%@`\n\r"']/.test(s) || s.trim() !== s) {
-    return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"'
+// --- Find a line by id (recursive) ---
+export function findLine(lines: ConvLine[], id: string): ConvLine | null {
+  for (const l of lines) {
+    if (l.id === id) return l
+    const found = findLine(l.next, id)
+    if (found) return found
   }
-  return s
+  return null
 }
 
-function yamlNull(v: string | number | null): string {
-  if (v === null || v === '') return 'null'
-  return yamlStr(String(v))
-}
-
-function serializeLines(lines: ConvLine[], indent: string): string {
-  return lines.map(l =>
-    `${indent}- speaker: ${yamlStr(l.speaker)}\n` +
-    `${indent}  text: ${yamlStr(l.text)}\n` +
-    `${indent}  audio: ${l.audio === null ? 'null' : l.audio}\n`
-  ).join('')
-}
-
-function serializeOptions(opts: ConvOption[], indent: string): string {
-  return opts.map(o =>
-    `${indent}- id: ${yamlStr(o.id)}\n` +
-    `${indent}  label: ${yamlStr(o.label)}\n` +
-    `${indent}  prerequisite: ${yamlNull(o.prerequisite)}\n` +
-    `${indent}  triggers: ${yamlNull(o.triggers)}\n` +
-    `${indent}  lines:\n` +
-    (o.lines.length ? serializeLines(o.lines, indent + '    ') : `${indent}    []\n`) +
-    `${indent}  response_menu:\n` +
-    (o.response_menu.length ? serializeOptions(o.response_menu, indent + '    ') : `${indent}    []\n`)
-  ).join('')
-}
-
-export function serializeConvData(data: ConvData): string {
-  let out = 'greetings:\n'
-  if (data.greetings.length === 0) {
-    out += '  []\n'
-  } else {
-    out += data.greetings.map(g =>
-      `  - id: ${yamlStr(g.id)}\n` +
-      `    prerequisite: ${yamlNull(g.prerequisite)}\n` +
-      `    lines:\n` +
-      (g.lines.length ? serializeLines(g.lines, '      ') : '      []\n')
-    ).join('')
-  }
-  out += 'menu:\n'
-  if (data.menu.length === 0) {
-    out += '  []\n'
-  } else {
-    out += serializeOptions(data.menu, '  ')
-  }
-  return out
-}
-
-// --- YAML parsing (simple, handles our own output format) ---
-// We rely on the server having stored valid YAML and returning it via getEntity body.
-// Parse using a lightweight approach: js-yaml is not available, so we use JSON
-// via a backend round-trip. Instead we store as JSON in the body for simplicity.
-// Actually: we'll store as JSON wrapped in a YAML code fence for human readability
-// but parse as JSON. See note in pane-conversation.ts.
-
+// --- Serialisation ---
 export function parseConvBody(body: string): ConvData {
   if (!body || !body.trim()) return emptyConvData()
   try {
-    // Body stored as JSON
     const parsed = JSON.parse(body)
-    return {
-      greetings: Array.isArray(parsed.greetings) ? parsed.greetings : [],
-      menu: Array.isArray(parsed.menu) ? parsed.menu : [],
-    }
-  } catch (_) {
-    return emptyConvData()
-  }
+    if (Array.isArray(parsed.lines)) return { lines: parsed.lines }
+    // legacy migration: flatten old greetings/menu into lines[]
+    const lines: ConvLine[] = []
+    return { lines }
+  } catch (_) { return emptyConvData() }
 }
 
 export function serializeConvBody(data: ConvData): string {

@@ -1637,9 +1637,23 @@ async def delete_voice(
 
 class GenerateVoiceBody(BaseModel):
     line_id: str
-    line_index: int
     text: str
     speaker_slug: str     # character slug - must have a registered voice on voxpop
+
+
+def _patch_audio(conv_data: dict, line_id: str, asset_id: int) -> None:
+    """Set audio field on the line with the given id (recursive search)."""
+    def _search(lines: list) -> bool:
+        for line in lines:
+            if not isinstance(line, dict):
+                continue
+            if line.get("id") == line_id:
+                line["audio"] = asset_id
+                return True
+            if _search(line.get("next", [])):
+                return True
+        return False
+    _search(conv_data.get("lines", []))
 
 
 
@@ -1648,7 +1662,6 @@ async def record_line(
     project_slug: str,
     entity_slug: str,
     line_id: str,
-    line_index: int,
     request: Request,
     session: str | None = Cookie(default=None, alias=COOKIE_NAME),
 ):
@@ -1665,7 +1678,7 @@ async def record_line(
     sha256 = _hashlib.sha256(wav_bytes).hexdigest()
     assets_dir = PROJECTS_ROOT / project_slug / "assets"
     assets_dir.mkdir(exist_ok=True)
-    filename = f"recorded_{entity_slug}_{line_id}_{line_index}_{sha256[:8]}.wav"
+    filename = f"recorded_{entity_slug}_{line_id}_{sha256[:8]}.wav"
     (assets_dir / filename).write_bytes(wav_bytes)
     rel_path = f"assets/{filename}"
 
@@ -1698,27 +1711,7 @@ async def record_line(
     except Exception:
         conv_data = {}
 
-    def _patch(items: list, tid: str, idx: int) -> bool:
-        for item in items:
-            if not isinstance(item, dict): continue
-            if item.get("id") == tid:
-                ll = item.get("lines", [])
-                if 0 <= idx < len(ll):
-                    ll[idx]["audio"] = asset_id
-                    return True
-            if _patch(item.get("response_menu", []), tid, idx): return True
-        return False
-
-    patched = False
-    for g in conv_data.get("greetings", []):
-        if isinstance(g, dict) and g.get("id") == line_id:
-            ll = g.get("lines", [])
-            if 0 <= line_index < len(ll):
-                ll[line_index]["audio"] = asset_id
-                patched = True
-                break
-    if not patched:
-        _patch(conv_data.get("menu", []), line_id, line_index)
+    _patch_audio(conv_data, line_id, asset_id)
 
     _write_entity_file(
         project_slug, entity_slug,
@@ -1736,7 +1729,6 @@ async def enhance_line(
     project_slug: str,
     entity_slug: str,
     line_id: str,
-    line_index: int,
     asset_id: int,
     session: str | None = Cookie(default=None, alias=COOKIE_NAME),
 ):
@@ -1776,7 +1768,7 @@ async def enhance_line(
 
     assets_dir = PROJECTS_ROOT / project_slug / "assets"
     assets_dir.mkdir(exist_ok=True)
-    filename = f"enhanced_{entity_slug}_{line_id}_{line_index}_{sha256[:8]}.wav"
+    filename = f"enhanced_{entity_slug}_{line_id}_{sha256[:8]}.wav"
     (assets_dir / filename).write_bytes(wav_out)
     rel_path = f"assets/{filename}"
 
@@ -1810,27 +1802,7 @@ async def enhance_line(
     except Exception:
         conv_data = {}
 
-    def _patch(items: list, tid: str, idx: int) -> bool:
-        for item in items:
-            if not isinstance(item, dict): continue
-            if item.get("id") == tid:
-                ll = item.get("lines", [])
-                if 0 <= idx < len(ll):
-                    ll[idx]["audio"] = new_asset_id
-                    return True
-            if _patch(item.get("response_menu", []), tid, idx): return True
-        return False
-
-    patched = False
-    for g in conv_data.get("greetings", []):
-        if isinstance(g, dict) and g.get("id") == line_id:
-            ll = g.get("lines", [])
-            if 0 <= line_index < len(ll):
-                ll[line_index]["audio"] = new_asset_id
-                patched = True
-                break
-    if not patched:
-        _patch(conv_data.get("menu", []), line_id, line_index)
+    _patch_audio(conv_data, line_id, new_asset_id)
 
     _write_entity_file(
         project_slug, entity_slug,
@@ -1868,7 +1840,7 @@ async def generate_voice(
     # Save WAV to assets directory
     assets_dir = PROJECTS_ROOT / project_slug / "assets"
     assets_dir.mkdir(exist_ok=True)
-    filename = f"voice_{entity_slug}_{body.line_id}_{body.line_index}_{sha256[:8]}.wav"
+    filename = f"voice_{entity_slug}_{body.line_id}_{sha256[:8]}.wav"
     asset_path = assets_dir / filename
     asset_path.write_bytes(wav_bytes)
     rel_path = f"assets/{filename}"
@@ -1907,31 +1879,7 @@ async def generate_voice(
     except Exception:
         conv_data = {}
 
-    def _patch_line(items: list, target_id: str, line_idx: int) -> bool:
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if item.get("id") == target_id:
-                lines_list = item.get("lines", [])
-                if 0 <= line_idx < len(lines_list):
-                    lines_list[line_idx]["audio"] = asset_id
-                    return True
-            # recurse into response_menu
-            if _patch_line(item.get("response_menu", []), target_id, line_idx):
-                return True
-        return False
-
-    patched = False
-    for greeting in conv_data.get("greetings", []):
-        if isinstance(greeting, dict) and greeting.get("id") == body.line_id:
-            lines_list = greeting.get("lines", [])
-            if 0 <= body.line_index < len(lines_list):
-                lines_list[body.line_index]["audio"] = asset_id
-                patched = True
-                break
-
-    if not patched:
-        _patch_line(conv_data.get("menu", []), body.line_id, body.line_index)
+    _patch_audio(conv_data, body.line_id, asset_id)
 
     new_body = _json.dumps(conv_data, indent=2)
     _write_entity_file(project_slug, entity_slug, conv_post.metadata.get("display_name", entity_slug),

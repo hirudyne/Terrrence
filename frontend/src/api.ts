@@ -80,7 +80,7 @@ export const api = {
     req<Asset>('POST', `/projects/${project}/entities/${entity}/generate-image`),
   getImagePrompt: (project: string, entity: string) =>
     req<{ prompt: string }>('GET', `/projects/${project}/entities/${entity}/image-prompt`),
-  generateVoice: (project: string, entity: string, data: { line_id: string; line_index: number; text: string; speaker_slug: string }) =>
+  generateVoice: (project: string, entity: string, data: { line_id: string; text: string; speaker_slug: string }) =>
     req<{ asset_id: number; filename: string }>('POST', `/projects/${project}/entities/${entity}/generate-voice`, data),
   listVoices: (project: string) =>
     req<{ voices: string[] }>('GET', `/projects/${project}/voices`),
@@ -92,8 +92,8 @@ export const api = {
     }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail ?? r.statusText) }); return r.json() }),
   deleteVoice: (project: string, characterSlug: string) =>
     req<unknown>('DELETE', `/projects/${project}/characters/${characterSlug}/register-voice`),
-  recordLine: (project: string, entity: string, lineId: string, lineIndex: number, wavBuffer: ArrayBuffer) =>
-    fetch(`/projects/${project}/entities/${entity}/record-line?line_id=${encodeURIComponent(lineId)}&line_index=${lineIndex}`, {
+  recordLine: (project: string, entity: string, lineId: string, wavBuffer: ArrayBuffer) =>
+    fetch(`/projects/${project}/entities/${entity}/record-line?line_id=${encodeURIComponent(lineId)}`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: wavBuffer,
@@ -111,8 +111,8 @@ export const api = {
     req<void>('DELETE', `/projects/${project}/entities/${entity}/tags/${encodeURIComponent(tag_name)}`),
   updateEntity: (project: string, slug: string, data: { display_name?: string; body?: string }) =>
     req<Entity>('PATCH', `/projects/${project}/entities/${slug}`, data),
-  enhanceLine: (project: string, entity: string, lineId: string, lineIndex: number, assetId: number) =>
-    req<{ asset_id: number; filename: string }>('POST', `/projects/${project}/entities/${entity}/enhance-line?line_id=${encodeURIComponent(lineId)}&line_index=${lineIndex}&asset_id=${assetId}`),
+  enhanceLine: (project: string, entity: string, lineId: string, assetId: number) =>
+    req<{ asset_id: number; filename: string }>('POST', `/projects/${project}/entities/${entity}/enhance-line?line_id=${encodeURIComponent(lineId)}&asset_id=${assetId}`),
   getBacklinks: (project: string, slug: string) =>
     req<{slug:string;type:string;display_name:string;occurrences:number}[]>('GET', `/projects/${project}/entities/${slug}/backlinks`),
   generateFacing: (project: string, entity: string, facing: string) =>
