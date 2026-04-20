@@ -487,6 +487,66 @@ export class PreviewPane {
     )
 
 
+    // Puppet walk settings
+    const puppetHeading = document.createElement('div')
+    puppetHeading.className = 'game-settings-heading'
+    puppetHeading.textContent = 'Puppet Walk'
+    section.appendChild(puppetHeading)
+
+    const pivotRow = document.createElement('div')
+    pivotRow.className = 'char-settings-row'
+    const pivotLabel = document.createElement('label')
+    pivotLabel.className = 'char-settings-label'
+    pivotLabel.textContent = 'Pivot (0-1): '
+    const pivotInput = document.createElement('input')
+    pivotInput.type = 'number'; pivotInput.min = '0.1'; pivotInput.max = '0.99'; pivotInput.step = '0.01'
+    pivotInput.className = 'char-settings-input'
+    pivotInput.value = String((detail.meta as Record<string,unknown>)?.puppet_pivot ?? 0.667)
+    let _pivotTimer: ReturnType<typeof setTimeout> | null = null
+    pivotInput.oninput = () => {
+      if (_pivotTimer) clearTimeout(_pivotTimer)
+      _pivotTimer = setTimeout(async () => {
+        const v = parseFloat(pivotInput.value)
+        if (!isNaN(v) && v >= 0.1 && v <= 0.99) {
+          await fetch(`/projects/${projectSlug}/entities/${detail.slug}`, {
+            method: 'PATCH', credentials: 'include',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ meta: { puppet_pivot: v } })
+          })
+        }
+      }, 800)
+    }
+    pivotLabel.appendChild(pivotInput)
+    pivotRow.appendChild(pivotLabel)
+    section.appendChild(pivotRow)
+
+    const angleRow = document.createElement('div')
+    angleRow.className = 'char-settings-row'
+    const angleLabel = document.createElement('label')
+    angleLabel.className = 'char-settings-label'
+    angleLabel.textContent = 'Max angle (deg): '
+    const angleInput = document.createElement('input')
+    angleInput.type = 'number'; angleInput.min = '1'; angleInput.max = '45'; angleInput.step = '1'
+    angleInput.className = 'char-settings-input'
+    angleInput.value = String((detail.meta as Record<string,unknown>)?.puppet_max_angle ?? '')
+    angleInput.placeholder = 'gait default'
+    let _angleTimer: ReturnType<typeof setTimeout> | null = null
+    angleInput.oninput = () => {
+      if (_angleTimer) clearTimeout(_angleTimer)
+      _angleTimer = setTimeout(async () => {
+        const raw = angleInput.value.trim()
+        const meta: Record<string,unknown> = raw === '' ? { puppet_max_angle: '' } : { puppet_max_angle: parseInt(raw) }
+        await fetch(`/projects/${projectSlug}/entities/${detail.slug}`, {
+          method: 'PATCH', credentials: 'include',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ meta })
+        })
+      }, 800)
+    }
+    angleLabel.appendChild(angleInput)
+    angleRow.appendChild(angleLabel)
+    section.appendChild(angleRow)
+
     // Start location
     section.appendChild(this._renderStartLocationFields(detail, projectSlug, locations))
 

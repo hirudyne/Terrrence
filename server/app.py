@@ -2345,6 +2345,12 @@ async def render_walk(
     if not entity or entity["type"] != "character":
         raise HTTPException(status_code=404, detail="character entity not found")
 
+    # Read per-character puppet settings from frontmatter
+    post = _read_entity_file(project_slug, entity_slug)
+    pivot_frac = float(post.metadata.get("puppet_pivot", 0.667))
+    max_angle_override = post.metadata.get("puppet_max_angle", None)
+    pivot_frac = max(0.1, min(0.99, pivot_frac))
+
     # Load facing image
     facing_bytes = _get_facing_bytes(project_slug, entity["id"], facing)
     if not facing_bytes:
@@ -2369,12 +2375,11 @@ async def render_walk(
         transparent_img = await asyncio.get_event_loop().run_in_executor(
             None, _remove_background, facing_bytes
         )
-        # Save transparent PNG as cached asset
         buf = _io.BytesIO()
         transparent_img.save(buf, "PNG")
         png_bytes = buf.getvalue()
-        ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        tr_filename = f"{entity_slug}_facing_{facing}_transparent_{ts}.png"
+        ts_now = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        tr_filename = f"{entity_slug}_facing_{facing}_transparent_{ts_now}.png"
         tr_path = _asset_dir(project_slug) / tr_filename
         tr_path.write_bytes(png_bytes)
         sha = _hl.sha256(png_bytes).hexdigest()
@@ -2399,99 +2404,109 @@ async def render_walk(
     sprite = transparent_img.crop(bbox)
     sw, sh = sprite.size
 
-    # Pivot point: centre-x, two-thirds down
     pivot_x = sw * 0.5
-    pivot_y = sh * (2.0 / 3.0)
+    pivot_y = sh * pivot_frac
 
     kf = _PUPPET_GAITS[gait]
-    N_FRAMES = 8
+    N_PUPPET_FRAMES = 8
     BG_COLOR = (180, 180, 180)
 
-    # Determine max canvas needed across all frames so all frames are same size
-    # Rotate a bounding box to find worst-case extents
+    # Scale gait angles to per-character max_angle if specified.
+    # Front/back facings use half the angle for a more restrained wobble.
+    base_angles = kf["angles"]
+    if max_angle_override is not None:
+        try:
+            max_ang = float(max_angle_override)
+        except (ValueError, TypeError):
+            max_ang = None
+        if max_ang is not None:
+            gait_max = max(abs(a) for a in base_angles) or 1
+            scale = max_ang / gait_max
+            base_angles = [a * scale for a in base_angles]
+    if facing in ("front", "back"):
+        base_angles = [a * 0.5 for a in base_angles]
+
     def _rotated_extent(w, h, px, py, angle_deg):
-        """Return (width, height) of bounding box after rotating w x h image around (px, py)."""
         a = _math.radians(angle_deg)
         corners = [(0,0),(w,0),(w,h),(0,h)]
         rotated = [
-            ((cx - px) * _math.cos(a) - (cy - py) * _math.sin(a) + px,
-             (cx - px) * _math.sin(a) + (cy - py) * _math.cos(a) + py)
-            for cx, cy in corners
+            ((cx-px)*_math.cos(a) - (cy-py)*_math.sin(a) + px,
+             (cx-px)*_math.sin(a) + (cy-py)*_math.cos(a) + py)
+            for cx,cy in corners
         ]
-        xs = [p[0] for p in rotated]
-        ys = [p[1] for p in rotated]
-        return _math.ceil(max(xs) - min(xs)), _math.ceil(max(ys) - min(ys))
+        xs = [p[0] for p in rotated]; ys = [p[1] for p in rotated]
+        return _math.ceil(max(xs)-min(xs)), _math.ceil(max(ys)-min(ys))
 
-    max_angle = max(abs(a) for a in kf["angles"])
+    max_angle = max(abs(a) for a in base_angles)
     max_cw, max_ch_rot = _rotated_extent(sw, sh, pivot_x, pivot_y, max_angle)
-    # Also account for squash (height can shrink, never grows beyond sh)
-    # Add generous padding
     pad = 20
     frame_w = max_cw + pad * 2
     frame_h = max(sh, max_ch_rot) + pad * 2
 
-    frames = []
-    for f in range(N_FRAMES):
-        angle = kf["angles"][f]
+    # Delete existing puppet frames for this facing
+    old_roles = [f"walk_puppet_{facing}_frame_{i}" for i in range(1, N_PUPPET_FRAMES+1)]
+    with db() as conn:
+        cur = conn.execute(
+            "SELECT a.id, a.rel_path FROM assets a JOIN asset_entities ae ON ae.asset_id=a.id "
+            "WHERE ae.entity_id=%s AND ae.role = ANY(%s)",
+            (entity["id"], old_roles),
+        )
+        old_assets = cur.fetchall()
+    if old_assets:
+        old_ids = [r["id"] for r in old_assets]
+        for r in old_assets:
+            p = _asset_dir(project_slug) / Path(r["rel_path"]).name
+            if p.exists(): p.unlink()
+        with db() as conn:
+            conn.execute("DELETE FROM asset_entities WHERE asset_id = ANY(%s)", (old_ids,))
+            conn.execute("DELETE FROM assets WHERE id = ANY(%s)", (old_ids,))
+
+    ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    saved_frames = []
+
+    for f in range(N_PUPPET_FRAMES):
+        angle = base_angles[f]
         squash = kf["squash"][f]
 
-        # Apply squash/stretch around pivot (scale y relative to pivot_y)
         if abs(squash - 1.0) > 0.001:
             new_sh = int(sh * squash)
-            # Scale the sprite vertically
             scaled = sprite.resize((sw, new_sh), _Img.LANCZOS)
-            # Adjust pivot y proportionally
             eff_pivot_y = pivot_y * squash
         else:
             scaled = sprite
             eff_pivot_y = pivot_y
 
-        # Rotate around pivot on an expanded canvas
-        exp_w, exp_h = scaled.size[0] * 3, scaled.size[1] * 3
-        expanded = _Img.new("RGBA", (exp_w, exp_h), (0, 0, 0, 0))
+        exp_w, exp_h = scaled.size[0]*3, scaled.size[1]*3
+        expanded = _Img.new("RGBA", (exp_w, exp_h), (0,0,0,0))
         off_x, off_y = scaled.size[0], scaled.size[1]
         expanded.paste(scaled, (off_x, off_y))
         rotated = expanded.rotate(
             -angle,
             center=(off_x + pivot_x, off_y + eff_pivot_y),
-            expand=False,
-            resample=_Img.BICUBIC,
+            expand=False, resample=_Img.BICUBIC,
         )
 
-        # Crop the region around where the sprite ended up
         crop_cx = off_x + pivot_x
         crop_cy = off_y + eff_pivot_y
-        x0 = int(crop_cx - frame_w / 2)
+        x0 = int(crop_cx - frame_w/2)
         y0 = int(crop_cy - eff_pivot_y - pad)
-        x1 = x0 + frame_w
-        y1 = y0 + frame_h
-        # Clamp to expanded canvas
-        x0c = max(0, x0); y0c = max(0, y0)
-        x1c = min(exp_w, x1); y1c = min(exp_h, y1)
-        cropped = rotated.crop((x0c, y0c, x1c, y1c))
+        x1 = x0 + frame_w; y1 = y0 + frame_h
+        x0c=max(0,x0); y0c=max(0,y0)
+        x1c=min(exp_w,x1); y1c=min(exp_h,y1)
+        cropped = rotated.crop((x0c,y0c,x1c,y1c))
 
-        # Composite onto bg
         bg = _Img.new("RGB", (frame_w, frame_h), BG_COLOR)
-        # Paste at offset in case we had to clamp
-        paste_x = x0c - x0
-        paste_y = y0c - y0
-        bg.paste(cropped, (paste_x, paste_y), cropped)
-        frames.append(bg)
+        bg.paste(cropped, (x0c-x0, y0c-y0), cropped)
 
-    # Build horizontal strip
-    sheet = _Img.new("RGB", (frame_w * N_FRAMES, frame_h), BG_COLOR)
-    for i, fr in enumerate(frames):
-        sheet.paste(fr, (i * frame_w, 0))
+        buf = _io.BytesIO()
+        bg.save(buf, "JPEG", quality=90)
+        frame_bytes = buf.getvalue()
+        frame_filename = f"{entity_slug}_puppet_{facing}_{f+1:02d}_{ts}.jpg"
+        role = f"walk_puppet_{facing}_frame_{f+1}"
+        result = await _save_character_asset(project, entity, project_slug, frame_bytes, frame_filename, role)
+        saved_frames.append(result)
 
-    buf = _io.BytesIO()
-    sheet.save(buf, "JPEG", quality=90)
-    image_data = buf.getvalue()
-
-    ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filename = f"{entity_slug}_walk_{gait}_{facing}_{ts}.jpg"
-    return await _save_character_asset(
-        project, entity, project_slug, image_data, filename, f"walk_sheet_{facing}"
-    )
+    return {"frames": saved_frames, "frame_w": frame_w, "frame_h": frame_h, "n": N_PUPPET_FRAMES}
 
 # ---------------------------------------------------------------------------
 # Static frontend (must be last - catch-all)

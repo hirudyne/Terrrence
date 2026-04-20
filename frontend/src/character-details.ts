@@ -6,8 +6,8 @@ const FACING_LABELS: Record<Facing, string> = { front: 'Front', left: 'Left', ri
 const GAITS = ['shuffle', 'stride', 'jog', 'waddle']
 const N_FRAMES = 8
 
-const facingRole = (f: Facing) => f === 'front' ? 'portrait' : `facing_${f}`
-const sheetRole  = (f: Facing) => `walk_sheet_${f}`
+const facingRole  = (f: Facing) => f === 'front' ? 'portrait' : `facing_${f}`
+const frameRole   = (f: Facing, n: number) => `walk_puppet_${f}_frame_${n}`
 
 export async function showCharacterDetails(
   projectSlug: string,
@@ -88,16 +88,14 @@ export async function showCharacterDetails(
     genFacingBtn.className = 'char-details-btn'
     genFacingBtn.textContent = facingAsset ? 'Regenerate' : 'Generate'
     genFacingBtn.onclick = async () => {
-      genFacingBtn.disabled = true
-      genFacingBtn.textContent = 'Generating...'
+      genFacingBtn.disabled = true; genFacingBtn.textContent = 'Generating...'
       try {
         const resp = await fetch(
           `/projects/${projectSlug}/entities/${characterSlug}/generate-facing?facing=${facing}`,
           { method: 'POST', credentials: 'include' }
         )
         if (!resp.ok) { const e = await resp.json().catch(() => ({ detail: resp.statusText })); throw new Error(e.detail) }
-        overlay.remove()
-        showCharacterDetails(projectSlug, characterSlug, characterName)
+        overlay.remove(); showCharacterDetails(projectSlug, characterSlug, characterName)
       } catch (e: any) {
         genFacingBtn.textContent = 'Error'; genFacingBtn.title = e?.message ?? String(e)
         setTimeout(() => { genFacingBtn.disabled = false; genFacingBtn.textContent = facingAsset ? 'Regenerate' : 'Generate' }, 4000)
@@ -118,8 +116,7 @@ export async function showCharacterDetails(
         const resp = await fetch(`/projects/${projectSlug}/assets`, { method: 'POST', credentials: 'include', body: fd })
         const a: Asset = await resp.json()
         await api.associateAsset(projectSlug, characterSlug, a.id, facingRole(facing))
-        overlay.remove()
-        showCharacterDetails(projectSlug, characterSlug, characterName)
+        overlay.remove(); showCharacterDetails(projectSlug, characterSlug, characterName)
       } catch (e: any) {
         upFacingBtn.textContent = 'Error'
         setTimeout(() => { upFacingBtn.disabled = false; upFacingBtn.textContent = 'Upload' }, 3000)
@@ -135,7 +132,7 @@ export async function showCharacterDetails(
     const puppetWrap = document.createElement('div')
     puppetWrap.className = 'char-details-puppet-wrap'
 
-    // Controls row: gait + render button + error
+    // Controls
     const renderRow = document.createElement('div')
     renderRow.className = 'char-details-render-controls'
 
@@ -162,24 +159,22 @@ export async function showCharacterDetails(
     const renderErr = document.createElement('span')
     renderErr.className = 'char-details-render-err'
     renderRow.appendChild(renderErr)
-
     puppetWrap.appendChild(renderRow)
 
-    // Player canvas - animates the sheet
+    // Player
     const playerSection = document.createElement('div')
     playerSection.className = 'char-details-puppet-player'
 
-    const canvas = document.createElement('canvas')
-    canvas.className = 'char-details-puppet-canvas'
-    playerSection.appendChild(canvas)
+    const playerImg = document.createElement('img')
+    playerImg.className = 'char-details-puppet-canvas'
 
-    // Player controls
     const playerControls = document.createElement('div')
     playerControls.className = 'char-details-player-controls'
 
     const playBtn = document.createElement('button')
     playBtn.className = 'char-details-btn char-details-btn--play'
     playBtn.textContent = 'Play'
+    playBtn.disabled = true
 
     const fpsLabel = document.createElement('label')
     fpsLabel.className = 'char-details-player-label'
@@ -191,93 +186,67 @@ export async function showCharacterDetails(
 
     playerControls.appendChild(playBtn)
     playerControls.appendChild(fpsLabel)
+    playerSection.appendChild(playerImg)
     playerSection.appendChild(playerControls)
     puppetWrap.appendChild(playerSection)
 
-    // Sheet thumbnail (full strip)
-    const sheetWrap = document.createElement('div')
-    sheetWrap.className = 'char-details-sheet-wrap'
-
     // Player state
-    let sheetImg: HTMLImageElement | null = null
-    let frameW = 0
-    let frameH = 0
+    let frameUrls: string[] = []
     let currentFrame = 0
     let playInterval: ReturnType<typeof setInterval> | null = null
 
-    function _drawFrame(n: number) {
-      if (!sheetImg || frameW === 0) return
-      const ctx = canvas.getContext('2d')!
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-      ctx.drawImage(sheetImg, n * frameW, 0, frameW, frameH, 0, 0, canvas.width, canvas.height)
+    function _stopPlayer() {
+      if (playInterval) { clearInterval(playInterval); playInterval = null; playBtn.textContent = 'Play' }
     }
 
-    function _loadSheet(asset: Asset) {
-      const img = new Image()
-      img.onload = () => {
-        sheetImg = img
-        frameW = img.naturalWidth / N_FRAMES
-        frameH = img.naturalHeight
-        // Size canvas to one frame, max 200px tall
-        const scale = Math.min(1, 200 / frameH)
-        canvas.width  = Math.round(frameW * scale)
-        canvas.height = Math.round(frameH * scale)
-        canvas.style.display = 'block'
-        currentFrame = 0
-        _drawFrame(0)
-        playBtn.disabled = false
-
-        // Also show full strip
-        sheetWrap.innerHTML = ''
-        sheetWrap.classList.remove('char-details-sheet-wrap--empty')
-        const stripImg = document.createElement('img')
-        stripImg.src = api.assetFileUrl(projectSlug, asset.id)
-        stripImg.className = 'char-details-walk-sheet-img'
-        sheetWrap.appendChild(stripImg)
-      }
-      img.src = api.assetFileUrl(projectSlug, asset.id)
+    function _loadFrames(frameAssets: Asset[]) {
+      frameUrls = frameAssets.map(a => api.assetFileUrl(projectSlug, a.id))
+      currentFrame = 0
+      playerImg.src = frameUrls[0]
+      playerImg.style.display = 'block'
+      playBtn.disabled = false
     }
 
-    // Load existing sheet if present
-    const existingSheet = byRole.get(sheetRole(facing))
-    if (existingSheet) {
-      _loadSheet(existingSheet)
-    } else {
-      canvas.style.display = 'none'
-      playBtn.disabled = true
-      sheetWrap.classList.add('char-details-sheet-wrap--empty')
-      sheetWrap.textContent = 'No puppet cycle rendered yet.'
-    }
-
-    // Play/stop
     playBtn.onclick = () => {
       if (playInterval) {
-        clearInterval(playInterval); playInterval = null; playBtn.textContent = 'Play'
+        _stopPlayer()
       } else {
+        if (!frameUrls.length) return
         const fps = Math.max(1, Math.min(30, parseInt(fpsInput.value) || 8))
         playInterval = setInterval(() => {
-          currentFrame = (currentFrame + 1) % N_FRAMES
-          _drawFrame(currentFrame)
+          currentFrame = (currentFrame + 1) % frameUrls.length
+          playerImg.src = frameUrls[currentFrame]
         }, 1000 / fps)
         playBtn.textContent = 'Stop'
       }
     }
 
-    // Re-render
+    // Load existing frames if present
+    const existingFrames: Asset[] = []
+    for (let i = 1; i <= N_FRAMES; i++) {
+      const a = byRole.get(frameRole(facing, i))
+      if (a) existingFrames.push(a)
+    }
+    if (existingFrames.length === N_FRAMES) {
+      _loadFrames(existingFrames)
+    } else {
+      playerImg.style.display = 'none'
+    }
+
+    // Render
     renderBtn.addEventListener('click', async () => {
-      if (playInterval) { clearInterval(playInterval); playInterval = null; playBtn.textContent = 'Play' }
+      _stopPlayer()
       renderBtn.disabled = true; renderBtn.textContent = 'Rendering...'; renderErr.textContent = ''
       try {
         const result = await api.renderWalk(projectSlug, characterSlug, gaitSel.value, facing)
-        byRole.set(sheetRole(facing), result)
-        _loadSheet(result)
+        for (const fr of result.frames) { if (fr.role) byRole.set(fr.role, fr) }
+        _loadFrames(result.frames)
       } catch (e: any) {
         renderErr.textContent = e?.message ?? 'Render failed'
       }
-      renderBtn.disabled = false; renderBtn.textContent = 'Render'
+      renderBtn.disabled = !facingAsset; renderBtn.textContent = 'Render'
     })
 
-    puppetWrap.appendChild(sheetWrap)
     facingRow.appendChild(puppetWrap)
     section.appendChild(facingRow)
     body.appendChild(section)
