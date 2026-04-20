@@ -32,13 +32,9 @@ Renaming an entity cascades the new display name into all inline token reference
 
 **Frontend:** TypeScript, Vite, Golden Layout 2, CodeMirror 6, Yjs
 
-**Database:** PostgreSQL (psycopg2). The schema is in `server/schema_postgres.sql`. A SQLite schema (`server/schema.sql`) is retained for reference but is not used at runtime.
+**Database:** PostgreSQL (psycopg2). Schema in `server/schema_postgres.sql`.
 
-**Persistence model:** Each entity is a Markdown file with YAML frontmatter:
-```
-projects/<project_slug>/content/<entity_slug>.md
-```
-The database is a **rebuildable index** - wiping it and rescanning the project tree must reproduce all content-derived rows. Markdown files on disk are the source of truth.
+**Persistence model:** Each entity is a Markdown file with YAML frontmatter at `projects/<project_slug>/content/<entity_slug>.md`. The database is a **rebuildable index** - Markdown files on disk are the source of truth.
 
 **Collaboration:** Yjs CRDT over WebSocket (custom implementation in `app.py`), with HTTP debounce as the reliable save path. Yjs state is in-memory only; users mid-session must reload after a server restart.
 
@@ -54,40 +50,56 @@ The database is a **rebuildable index** - wiping it and rescanning the project t
 |---|---|
 | `game` | One per project, auto-created, cannot be deleted. Holds top-level narrative overview and `art_style`. |
 | `chapter` | Parented under game. Slug derived as `C<N>` from "Chapter N - ..." naming. |
-| `location` | Flat. Carries `map_x`/`map_y` for world map placement and `connections` for adjacency graph. |
-| `character` | Flat. Carries `physical_appearance`, `voice_description`, `start_location`. |
+| `location` | Flat. Carries `map_x`/`map_y` for world map placement, `connections` for adjacency graph, `scene_image` asset ID. |
+| `character` | Flat. Carries `physical_appearance`, `voice_description`, `start_location`, `skin_tone`, `gait_style`, `puppet_pivot`, `puppet_max_angle`. |
 | `item` | Flat. Carries `start_location`. |
 | `event` | Parented under chapter. Created inline inside chapter documents only. |
 | `conversation` | Parented under character. Body is structured JSON (greetings + recursive menu tree). |
-| `spot` | Parented under location. Named interactive points within a scene. |
+| `spot` | Parented under location. Named interactive points within a scene. Carries `spot_x`, `spot_y`, `connection_id`. |
 
 ### Navigator
 
 Three-pane Golden Layout UI:
 
-- **Left - Navigator:** tree view (sections independently collapsible/maximisable) or tab view. World map overlay for locations; spot map overlay per location item. Backlinks displayed in preview pane.
-- **Centre - Editor:** CodeMirror 6 with token syntax highlighting and autocomplete. Conversation entities open a dedicated structured editor instead of CodeMirror.
-- **Right - Preview:** rendered body with clickable token links. Tag chips. Asset panel (upload, generate, attach). Character settings (appearance, voice recorder, character asset modal). Location settings (scene image selector). Start location fields for characters and items.
+- **Left - Navigator:** tree view (sections independently collapsible/maximisable) or tab view. World map overlay for locations; spot map overlay per location item.
+- **Centre - Editor:** CodeMirror 6 with token syntax highlighting and autocomplete. Conversation entities open a dedicated structured editor.
+- **Right - Preview:** rendered body with clickable token links. Tag chips. Asset panel. Character/location/item settings. Backlinks.
 
 ### Image generation
 
-Requires an xAI API key. Art style is read from the game entity's `art_style` frontmatter field.
+Requires an xAI API key (`XAI_API_KEY` in `.secrets`). Art style read from the game entity's `art_style` frontmatter field.
 
-- Locations/characters/items: scene image, portrait, or sprite via `/v1/images/generations`
+- Locations, characters, items: scene/portrait/sprite via `/v1/images/generations`
 - Character facings (back/left/right): conditioned on portrait via `/v1/images/edits`
-- Walk cycle frames: 8 frames per facing, each conditioned on portrait
+
+### Puppet walk cycle
+
+Character asset modal (accessed via "Character Assets" button in preview pane) generates directional facing images and renders puppet walk cycles without any AI calls:
+
+1. Generate a portrait, then generate directional facings (front/back/left/right) conditioned on it.
+2. Hit **Render** on any facing to produce an 8-frame walk cycle as individual RGBA PNGs.
+3. The player in the modal animates the frames at a configurable FPS.
+
+**How it works:** rembg removes the background from the facing image (result cached as `facing_{dir}_transparent`). The transparent sprite is then rotated around a configurable pivot point with sinusoidal squash/stretch to simulate a walking bob. Frames are stored as `walk_puppet_{facing}_frame_1-8`.
+
+**Per-character controls** (in character preview pane, Puppet Walk section):
+- `Gait`: shuffle / stride / jog / waddle / custom. Controls the angle table and squash parameters.
+- `Pivot (0-1)`: vertical position of rotation pivot as a fraction of sprite height. Default 0.667. Only editable in custom mode.
+- `Max angle (deg)`: overrides the gait's default angle range. Only editable in custom mode.
+
+Front/back facings automatically use half the angle of left/right for a more restrained wobble.
 
 ### Voice synthesis
 
-Requires a locally hosted Parler TTS service. Characters can have a registered WAV voice reference. Lines in conversations can be synthesised or recorded directly from the browser microphone. Recorded and synthesised audio can be post-processed with DeepFilterNet.
+Requires a locally hosted Parler TTS service. Characters can have a registered WAV voice reference. Lines in conversations can be synthesised or recorded from the browser microphone. Audio can be post-processed with DeepFilterNet.
 
 ### World map
 
-Full-screen overlay for placing and connecting locations on a canvas. Location cards are draggable. Connections are drawn by dragging from a card's border zone. Connection IDs are `slugA__slugB` (alpha-sorted, with `__2`, `__3` suffixes for multiple connections between the same pair).
+Full-screen overlay for placing and connecting locations on a canvas. Connection IDs are `slugA__slugB` (alpha-sorted, `__2`/`__3` suffixes for multiples).
 
 ### Spot map
 
-Per-location overlay backed by a scene image. Spots, characters, and items are placed as cards on separate toggleable layers. Spots can be assigned to world-map connections to act as player-facing exits (scene transitions).
+Per-location overlay backed by a scene image. Spots, characters, and items placed as cards on toggleable layers. Spots can be assigned to world-map connections to act as player-facing exits.
 
 ### Rename cascade
 
@@ -99,10 +111,8 @@ Renaming an entity derives a new slug, renames the `.md` file, updates the DB, a
 
 ### Requirements
 
-- Python 3.11+
-- Node 18+
-- PostgreSQL (any recent version)
-- Python packages: `fastapi uvicorn[standard] psycopg2-binary httpx watchdog python-frontmatter argon2-cffi python-multipart aiofiles y-py`
+- Python 3.11+, Node 18+, PostgreSQL
+- Python packages: `fastapi "uvicorn[standard]" psycopg2-binary httpx watchdog python-frontmatter argon2-cffi python-multipart aiofiles y-py Pillow "rembg[cpu]"`
 
 ### Database
 
@@ -114,10 +124,10 @@ psql -U terrrence_user -d terrrence_db -f server/schema_postgres.sql
 
 ### Configuration
 
-Create a `.secrets` file alongside the server (keep out of version control):
+Create `.secrets` alongside the server (gitignored):
 
 ```
-XAI_API_KEY=...        # optional, for image generation
+XAI_API_KEY=...
 PG_HOST=localhost
 PG_PORT=5432
 PG_DBNAME=terrrence_db
@@ -125,35 +135,24 @@ PG_USER=terrrence_user
 PG_PASSWORD=yourpassword
 ```
 
-Set `TERRRENCE_INSECURE_COOKIES=1` in your environment if running without TLS (development only).
+Set `TERRRENCE_INSECURE_COOKIES=1` in environment if running without TLS (development only).
 
 ### First run
 
 ```sh
-# Install Python deps
-pip install fastapi "uvicorn[standard]" psycopg2-binary httpx watchdog python-frontmatter argon2-cffi python-multipart aiofiles y-py
-
-# Build frontend
+pip install fastapi "uvicorn[standard]" psycopg2-binary httpx watchdog python-frontmatter \
+    argon2-cffi python-multipart aiofiles y-py Pillow "rembg[cpu]"
 cd frontend && npm install && npm run build && cd ..
-
-# Mint an API key
 python3 server/mint_key.py --label owner
-# Copy the printed key - it will not be shown again
-
-# Start the server
 cd server && uvicorn app:app --host 0.0.0.0 --port 8000
 ```
-
-The server listens on `0.0.0.0:8000`. Place it behind a TLS-terminating reverse proxy before exposing publicly.
 
 ### Optional services
 
 | Service | Default address | Purpose |
 |---|---|---|
-| Parler TTS (voice clone) | `http://localhost:8001` | Line synthesis via named voice |
-| DeepFilterNet | `http://localhost:8002` | Audio noise reduction |
-
-These are only needed for voice features. The addresses are configured as `VOXPOP_URL` in `app.py`.
+| Parler TTS (voice clone) | `http://purpose-voxpop:8001` | Line synthesis |
+| DeepFilterNet | `http://purpose-voxpop:8002` | Audio noise reduction |
 
 ---
 
@@ -161,32 +160,27 @@ These are only needed for voice features. The addresses are configured as `VOXPO
 
 ```
 server/
-  app.py                All backend routes and logic
+  app.py                All backend routes and logic (~2600 lines)
   mint_key.py           CLI key minter
   schema_postgres.sql   Full PostgreSQL DDL
-  schema.sql            SQLite DDL (reference only)
 frontend/
   src/
     api.ts              Typed fetch wrapper for all API methods
-    audio-utils.ts      Browser mic recording and WAV transcode utility
-    character-details.ts  Character asset modal (facings + walk cycle)
+    audio-utils.ts      Browser mic recording and WAV transcode
+    character-details.ts  Character asset modal (facings + puppet walk cycle player)
     conversation-types.ts ConvData schema types and ID generation
     editor.ts           CodeMirror 6 factory, Yjs binding, token highlighting, autocomplete
     layout.ts           Golden Layout 2 three-pane config
     login.ts            Login screen
-    main.ts             Boot: whoami or login, then initLayout
+    main.ts             Boot sequence
     pane-conversation.ts  Conversation structured editor
     pane-editor.ts      Centre pane: tab bar and editor mounting
     pane-nav.ts         Left pane: tree/tab views, modals, entity management
-    pane-preview.ts     Right pane: rendered preview, tags, assets, settings
-    spot-map.ts         Spot map overlay for locations
-    state.ts            Observable global state (no framework)
+    pane-preview.ts     Right pane: preview, tags, assets, character/location settings
+    spot-map.ts         Spot map overlay
+    state.ts            Observable global state
     style.css           Dark theme, all component styles
-    world-map.ts        World map overlay for location placement
-  index.html
-  package.json
-  tsconfig.json
-  vite.config.ts
+    world-map.ts        World map overlay
 ```
 
 ---
@@ -198,8 +192,10 @@ frontend/
 display_name: Sholver's Mum
 slug: sholver_s_mum
 type: character
-physical_appearance: "tall, weathered skin..."
-voice_description: "gruff older female..."
+physical_appearance: "little old lady..."
+voice_description: "northern working class old lady..."
+skin_tone: "#c4956a"
+gait_style: shuffle
 start_location:
   location: corner_shop
   x: 0.4
@@ -209,13 +205,28 @@ start_location:
 Body text with ##inline## @@token@@ ~~references~~.
 ```
 
-Conversation entity bodies contain structured JSON instead of prose. Schema defined in `conversation-types.ts`.
+Conversation entity bodies contain structured JSON. Schema defined in `conversation-types.ts`.
 
 ---
 
 ## Slug derivation
 
 - Chapters: `"Chapter 3 - ..."` -> `C3`
-- All others: unicode normalise -> ASCII -> lowercase -> collapse non-alphanumeric runs to `_` -> truncate 64 chars
-- `deriveSlug()` in `pane-nav.ts` must be kept in sync with `_derive_slug()` in `app.py`
+- Others: unicode normalise -> ASCII -> lowercase -> collapse non-alphanumeric to `_` -> truncate 64 chars
+- `deriveSlug()` in `pane-nav.ts` must stay in sync with `_derive_slug()` in `app.py`
 
+---
+
+## Known gaps and deferred work
+
+- Slug rename cascade does not yet rewrite body text of conversation JSON
+- Backlinks endpoint exists but no nav UI for it
+- Git commits per save (repos initialised per project, never committed; `user.name`/`user.email` not set)
+- fail2ban config exists at `fail2ban/` but is not active
+- Key management is CLI only (`mint_key.py`)
+- Share panel requires project modal to be opened once per session for ownership detection
+- Playable scene preview (DSL design settled, not implemented)
+- Walk cycle frame count hardcoded at 8 (configurable via `puppet_frame_count` frontmatter is a planned trivial addition)
+- Frame-locked movement: movement system should dynamically adjust animation FPS so motion always ends on frame 0; feasible once scene preview is built
+- Intercardinal facings (NW/NE etc.) are not generated; optical flow interpolation between cardinals is not recommended due to face morphing artefacts
+- `TERRRENCE_INSECURE_COOKIES=1` in `start.sh` must be removed before public deployment without edge TLS
