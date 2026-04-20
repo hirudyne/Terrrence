@@ -2490,7 +2490,7 @@ async def render_walk(
     ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     filename = f"{entity_slug}_walk_{gait}_{facing}_{ts}.jpg"
     return await _save_character_asset(
-        project, entity, project_slug, image_data, filename, "walk_sheet"
+        project, entity, project_slug, image_data, filename, f"walk_sheet_{facing}"
     )
 
 # ---------------------------------------------------------------------------

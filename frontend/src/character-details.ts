@@ -4,32 +4,32 @@ const FACINGS = ['front', 'left', 'right', 'back'] as const
 type Facing = typeof FACINGS[number]
 
 const FACING_LABELS: Record<Facing, string> = {
-  front: 'Front',
-  left: 'Left',
-  right: 'Right',
-  back: 'Back',
+  front: 'Front', left: 'Left', right: 'Right', back: 'Back',
 }
 
 const WALK_FRAME_COUNT = 8
+const GAITS = ['shuffle', 'stride', 'jog', 'waddle']
 
-// Role names
 const facingRole = (f: Facing) => f === 'front' ? 'portrait' : `facing_${f}`
 const walkRole = (f: Facing, n: number) => `walk_${f}_frame_${n}`
+const sheetRole = (f: Facing) => `walk_sheet_${f}`
 
 export async function showCharacterDetails(
   projectSlug: string,
   characterSlug: string,
   characterName: string,
 ): Promise<void> {
+  const existing = document.getElementById('char-details-overlay')
+  if (existing) existing.remove()
 
   const overlay = document.createElement('div')
+  overlay.id = 'char-details-overlay'
   overlay.className = 'char-details-overlay'
 
   const panel = document.createElement('div')
   panel.className = 'char-details-panel'
   overlay.appendChild(panel)
 
-  // Header
   const hdr = document.createElement('div')
   hdr.className = 'char-details-header'
   const titleEl = document.createElement('span')
@@ -43,26 +43,19 @@ export async function showCharacterDetails(
   hdr.appendChild(closeBtn)
   panel.appendChild(hdr)
 
-  // Body - scrollable
   const body = document.createElement('div')
   body.className = 'char-details-body'
   panel.appendChild(body)
 
   document.body.appendChild(overlay)
-
-  // Loading state
   body.textContent = 'Loading...'
 
-  // Fetch all assets for this character
   const assets = await api.listEntityAssets(projectSlug, characterSlug)
   const byRole = new Map<string, Asset>()
-  for (const a of assets) {
-    if (a.role) byRole.set(a.role, a)
-  }
+  for (const a of assets) { if (a.role) byRole.set(a.role, a) }
 
   body.textContent = ''
 
-  // For each facing: render a section with portrait/facing + walk frames
   for (const facing of FACINGS) {
     const section = document.createElement('div')
     section.className = 'char-details-section'
@@ -75,12 +68,11 @@ export async function showCharacterDetails(
     const facingRow = document.createElement('div')
     facingRow.className = 'char-details-facing-row'
 
-    // Facing image slot
+    // --- Facing image slot ---
     const facingSlot = document.createElement('div')
     facingSlot.className = 'char-details-facing-slot'
-    const role = facingRole(facing)
-    const facingAsset = byRole.get(role)
 
+    const facingAsset = byRole.get(facingRole(facing))
     const facingImg = document.createElement('div')
     facingImg.className = 'char-details-img-wrap'
     if (facingAsset) {
@@ -94,7 +86,9 @@ export async function showCharacterDetails(
     }
     facingSlot.appendChild(facingImg)
 
-    // Generate button for facing
+    const facingBtns = document.createElement('div')
+    facingBtns.className = 'char-details-facing-btns'
+
     const genFacingBtn = document.createElement('button')
     genFacingBtn.className = 'char-details-btn'
     genFacingBtn.textContent = facingAsset ? 'Regenerate' : 'Generate'
@@ -103,7 +97,6 @@ export async function showCharacterDetails(
       genFacingBtn.textContent = 'Generating...'
       try {
         await _generateFacing(projectSlug, characterSlug, facing, byRole)
-        // Refresh
         overlay.remove()
         showCharacterDetails(projectSlug, characterSlug, characterName)
       } catch (e: any) {
@@ -112,9 +105,8 @@ export async function showCharacterDetails(
         setTimeout(() => { genFacingBtn.disabled = false; genFacingBtn.textContent = facingAsset ? 'Regenerate' : 'Generate' }, 3000)
       }
     }
-    facingSlot.appendChild(genFacingBtn)
+    facingBtns.appendChild(genFacingBtn)
 
-    // Upload button for facing
     const upFacingBtn = document.createElement('button')
     upFacingBtn.className = 'char-details-btn char-details-btn--secondary'
     upFacingBtn.textContent = 'Upload'
@@ -127,86 +119,68 @@ export async function showCharacterDetails(
         const fd = new FormData(); fd.append('file', file)
         const resp = await fetch(`/projects/${projectSlug}/assets`, { method: 'POST', credentials: 'include', body: fd })
         const a: Asset = await resp.json()
-        await api.associateAsset(projectSlug, characterSlug, a.id, role)
+        await api.associateAsset(projectSlug, characterSlug, a.id, facingRole(facing))
         overlay.remove()
         showCharacterDetails(projectSlug, characterSlug, characterName)
       } catch (e: any) {
-        upFacingBtn.textContent = 'Error'; upFacingBtn.title = e?.message ?? String(e)
+        upFacingBtn.textContent = 'Error'
         setTimeout(() => { upFacingBtn.disabled = false; upFacingBtn.textContent = 'Upload' }, 3000)
       }
     }
     upFacingBtn.onclick = () => upFacingInput.click()
-    facingSlot.appendChild(upFacingBtn)
-    facingSlot.appendChild(upFacingInput)
-
+    facingBtns.appendChild(upFacingBtn)
+    facingBtns.appendChild(upFacingInput)
+    facingSlot.appendChild(facingBtns)
     facingRow.appendChild(facingSlot)
 
-    // Walk frames
+    // --- Walk content (right side) ---
     const walkWrap = document.createElement('div')
     walkWrap.className = 'char-details-walk-wrap'
 
-    // Preview player
+    // Walk frame player
     const playerWrap = document.createElement('div')
     playerWrap.className = 'char-details-player'
 
-    const playerImg = document.createElement('img')
-    playerImg.className = 'char-details-player-img'
-
     const frameAssets: (Asset | undefined)[] = []
-    for (let i = 1; i <= WALK_FRAME_COUNT; i++) {
-      frameAssets.push(byRole.get(walkRole(facing, i)))
-    }
+    for (let i = 1; i <= WALK_FRAME_COUNT; i++) frameAssets.push(byRole.get(walkRole(facing, i)))
     const frameUrls = frameAssets.map(a => a ? api.assetFileUrl(projectSlug, a.id) : null)
     const hasAnyFrame = frameUrls.some(u => u !== null)
 
     if (hasAnyFrame) {
-      // Show first available frame initially
-      const firstUrl = frameUrls.find(u => u !== null)!
-      playerImg.src = firstUrl
+      const playerImg = document.createElement('img')
+      playerImg.className = 'char-details-player-img'
+      playerImg.src = frameUrls.find(u => u !== null)!
       playerWrap.appendChild(playerImg)
 
-      // FPS control + play/stop
       const playerControls = document.createElement('div')
       playerControls.className = 'char-details-player-controls'
-
       const fpsLabel = document.createElement('label')
-      fpsLabel.textContent = 'FPS: '
       fpsLabel.className = 'char-details-player-label'
+      fpsLabel.textContent = 'FPS: '
       const fpsInput = document.createElement('input')
       fpsInput.type = 'number'; fpsInput.min = '1'; fpsInput.max = '30'; fpsInput.value = '8'
       fpsInput.className = 'char-details-fps-input'
-
       let _playInterval: ReturnType<typeof setInterval> | null = null
       let _frameIdx = 0
       const validUrls = frameUrls.filter(u => u !== null) as string[]
-
       const playBtn = document.createElement('button')
       playBtn.className = 'char-details-btn char-details-btn--play'
       playBtn.textContent = 'Play'
       playBtn.onclick = () => {
         if (_playInterval) {
-          clearInterval(_playInterval)
-          _playInterval = null
-          playBtn.textContent = 'Play'
+          clearInterval(_playInterval); _playInterval = null; playBtn.textContent = 'Play'
         } else {
           const fps = Math.max(1, Math.min(30, parseInt(fpsInput.value) || 8))
           _playInterval = setInterval(() => {
-            _frameIdx = (_frameIdx + 1) % validUrls.length
-            playerImg.src = validUrls[_frameIdx]
+            _frameIdx = (_frameIdx + 1) % validUrls.length; playerImg.src = validUrls[_frameIdx]
           }, 1000 / fps)
           playBtn.textContent = 'Stop'
         }
       }
-
-      // Scrub bar
       const scrub = document.createElement('input')
       scrub.type = 'range'; scrub.min = '0'; scrub.max = String(validUrls.length - 1); scrub.value = '0'
       scrub.className = 'char-details-scrub'
-      scrub.oninput = () => {
-        _frameIdx = parseInt(scrub.value)
-        playerImg.src = validUrls[_frameIdx]
-      }
-
+      scrub.oninput = () => { _frameIdx = parseInt(scrub.value); playerImg.src = validUrls[_frameIdx] }
       fpsLabel.appendChild(fpsInput)
       playerControls.appendChild(playBtn)
       playerControls.appendChild(fpsLabel)
@@ -218,35 +192,28 @@ export async function showCharacterDetails(
     }
     walkWrap.appendChild(playerWrap)
 
-    // Individual frame slots
+    // Frame strip
     const framesRow = document.createElement('div')
     framesRow.className = 'char-details-frames-row'
-
     for (let i = 1; i <= WALK_FRAME_COUNT; i++) {
       const frameAsset = byRole.get(walkRole(facing, i))
       const slot = document.createElement('div')
       slot.className = 'char-details-frame-slot'
-
       const frameImg = document.createElement('div')
       frameImg.className = 'char-details-frame-thumb'
       if (frameAsset) {
-        const img = document.createElement('img')
-        img.src = api.assetFileUrl(projectSlug, frameAsset.id)
+        const img = document.createElement('img'); img.src = api.assetFileUrl(projectSlug, frameAsset.id)
         frameImg.appendChild(img)
       } else {
         frameImg.classList.add('char-details-frame-thumb--empty')
       }
       slot.appendChild(frameImg)
-
       const frameLabel = document.createElement('div')
       frameLabel.className = 'char-details-frame-label'
       frameLabel.textContent = String(i)
       slot.appendChild(frameLabel)
-
-      // Upload individual frame
       const upFrameBtn = document.createElement('button')
       upFrameBtn.className = 'char-details-frame-btn'
-      upFrameBtn.title = `Upload frame ${i}`
       upFrameBtn.textContent = frameAsset ? '↑' : '+'
       const upFrameInput = document.createElement('input')
       upFrameInput.type = 'file'; upFrameInput.accept = 'image/*'; upFrameInput.style.display = 'none'
@@ -263,18 +230,16 @@ export async function showCharacterDetails(
         } catch { upFrameBtn.disabled = false }
       }
       upFrameBtn.onclick = () => upFrameInput.click()
-      slot.appendChild(upFrameBtn)
-      slot.appendChild(upFrameInput)
-
+      slot.appendChild(upFrameBtn); slot.appendChild(upFrameInput)
       framesRow.appendChild(slot)
     }
     walkWrap.appendChild(framesRow)
 
-    // Generate all walk frames button
-    if (byRole.has(facingRole(facing))) {
+    // Generate walk frames button (only if facing image exists)
+    if (facingAsset) {
       const genWalkBtn = document.createElement('button')
       genWalkBtn.className = 'char-details-btn char-details-btn--walk-gen'
-      genWalkBtn.textContent = 'Generate walk cycle'
+      genWalkBtn.textContent = 'Generate walk frames'
       genWalkBtn.onclick = async () => {
         genWalkBtn.disabled = true
         genWalkBtn.textContent = 'Generating (0/8)...'
@@ -284,108 +249,79 @@ export async function showCharacterDetails(
           overlay.remove()
           showCharacterDetails(projectSlug, characterSlug, characterName)
         } catch (e: any) {
-          genWalkBtn.textContent = 'Error'
-          genWalkBtn.title = e?.message ?? String(e)
-          setTimeout(() => { genWalkBtn.disabled = false; genWalkBtn.textContent = 'Generate walk cycle' }, 3000)
+          genWalkBtn.textContent = 'Error'; genWalkBtn.title = e?.message ?? String(e)
+          setTimeout(() => { genWalkBtn.disabled = false; genWalkBtn.textContent = 'Generate walk frames' }, 3000)
         }
       }
       walkWrap.appendChild(genWalkBtn)
     }
 
+    // --- Puppet render row (per facing) ---
+    const renderRow = document.createElement('div')
+    renderRow.className = 'char-details-render-controls'
+
+    const gaitLabel = document.createElement('label')
+    gaitLabel.className = 'char-details-render-label'
+    gaitLabel.textContent = 'Gait: '
+    const gaitSel = document.createElement('select')
+    gaitSel.className = 'char-details-render-select'
+    for (const g of GAITS) {
+      const opt = document.createElement('option')
+      opt.value = g; opt.textContent = g.charAt(0).toUpperCase() + g.slice(1)
+      gaitSel.appendChild(opt)
+    }
+    gaitLabel.appendChild(gaitSel)
+    renderRow.appendChild(gaitLabel)
+
+    const renderBtn = document.createElement('button')
+    renderBtn.className = 'char-details-btn char-details-btn--render'
+    renderBtn.textContent = 'Render puppet cycle'
+    renderBtn.disabled = !facingAsset
+    renderBtn.title = facingAsset ? '' : 'Generate facing image first'
+    renderRow.appendChild(renderBtn)
+
+    const renderErr = document.createElement('span')
+    renderErr.className = 'char-details-render-err'
+    renderRow.appendChild(renderErr)
+
+    walkWrap.appendChild(renderRow)
+
+    // Sheet preview (per facing)
+    const existingSheet = byRole.get(sheetRole(facing))
+    const sheetWrap = document.createElement('div')
+    sheetWrap.className = 'char-details-sheet-wrap'
+    if (existingSheet) {
+      const img = document.createElement('img')
+      img.src = api.assetFileUrl(projectSlug, existingSheet.id)
+      img.className = 'char-details-walk-sheet-img'
+      sheetWrap.appendChild(img)
+    } else {
+      sheetWrap.classList.add('char-details-sheet-wrap--empty')
+      sheetWrap.textContent = 'No puppet cycle rendered yet.'
+    }
+    walkWrap.appendChild(sheetWrap)
+
+    renderBtn.addEventListener('click', async () => {
+      renderBtn.disabled = true; renderBtn.textContent = 'Rendering...'; renderErr.textContent = ''
+      try {
+        const result = await api.renderWalk(projectSlug, characterSlug, gaitSel.value, facing)
+        byRole.set(sheetRole(facing), result)
+        sheetWrap.innerHTML = ''
+        sheetWrap.classList.remove('char-details-sheet-wrap--empty')
+        const img = document.createElement('img')
+        img.src = api.assetFileUrl(projectSlug, result.id)
+        img.className = 'char-details-walk-sheet-img'
+        sheetWrap.appendChild(img)
+      } catch (e: any) {
+        renderErr.textContent = e?.message ?? 'Render failed'
+      }
+      renderBtn.disabled = !facingAsset; renderBtn.textContent = 'Render puppet cycle'
+    })
+
     facingRow.appendChild(walkWrap)
     section.appendChild(facingRow)
     body.appendChild(section)
   }
-
-  // Render walk cycle section
-  const renderSection = document.createElement('div')
-  renderSection.className = 'char-details-section'
-
-  const renderHdr = document.createElement('div')
-  renderHdr.className = 'char-details-section-hdr'
-  renderHdr.textContent = 'Walk Cycle (Puppet)'
-  renderSection.appendChild(renderHdr)
-
-  const renderControls = document.createElement('div')
-  renderControls.className = 'char-details-render-controls'
-
-  const gaitLabel = document.createElement('label')
-  gaitLabel.className = 'char-details-render-label'
-  gaitLabel.textContent = 'Gait: '
-  const gaitSel = document.createElement('select')
-  gaitSel.className = 'char-details-render-select'
-  for (const g of ['shuffle','stride','jog','waddle']) {
-    const opt = document.createElement('option')
-    opt.value = g
-    opt.textContent = g.charAt(0).toUpperCase() + g.slice(1)
-    gaitSel.appendChild(opt)
-  }
-  gaitLabel.appendChild(gaitSel)
-  renderControls.appendChild(gaitLabel)
-
-  const facingLabel = document.createElement('label')
-  facingLabel.className = 'char-details-render-label'
-  facingLabel.textContent = 'Facing: '
-  const facingSel = document.createElement('select')
-  facingSel.className = 'char-details-render-select'
-  for (const f of ['front','left','right','back']) {
-    const opt = document.createElement('option')
-    opt.value = f
-    opt.textContent = f.charAt(0).toUpperCase() + f.slice(1)
-    if (f === 'left') opt.selected = true
-    facingSel.appendChild(opt)
-  }
-  facingLabel.appendChild(facingSel)
-  renderControls.appendChild(facingLabel)
-
-  const renderBtn = document.createElement('button')
-  renderBtn.className = 'char-details-btn char-details-btn--render'
-  renderBtn.textContent = 'Render'
-  renderControls.appendChild(renderBtn)
-
-  const renderErr = document.createElement('span')
-  renderErr.className = 'char-details-render-err'
-  renderControls.appendChild(renderErr)
-
-  renderSection.appendChild(renderControls)
-
-  const sheetWrap = document.createElement('div')
-  sheetWrap.className = 'char-details-sheet-wrap'
-  const existingSheet = byRole.get('walk_sheet')
-  if (existingSheet) {
-    const img = document.createElement('img')
-    img.src = api.assetFileUrl(projectSlug, existingSheet.id)
-    img.className = 'char-details-walk-sheet-img'
-    sheetWrap.appendChild(img)
-  } else {
-    sheetWrap.classList.add('char-details-sheet-wrap--empty')
-    sheetWrap.textContent = 'No walk cycle rendered yet.'
-  }
-  renderSection.appendChild(sheetWrap)
-
-  renderBtn.addEventListener('click', async () => {
-    renderBtn.disabled = true
-    renderBtn.textContent = 'Rendering...'
-    renderErr.textContent = ''
-    try {
-      const result = await api.renderWalk(projectSlug, characterSlug, gaitSel.value, facingSel.value)
-      byRole.set('walk_sheet', result)
-      sheetWrap.innerHTML = ''
-      sheetWrap.classList.remove('char-details-sheet-wrap--empty')
-      const img = document.createElement('img')
-      img.src = api.assetFileUrl(projectSlug, result.id)
-      img.className = 'char-details-walk-sheet-img'
-      sheetWrap.appendChild(img)
-    } catch (e: any) {
-      renderErr.textContent = e?.message ?? 'Render failed'
-      renderBtn.textContent = 'Render'
-    }
-    renderBtn.disabled = false
-    renderBtn.textContent = 'Render'
-  })
-
-  body.appendChild(renderSection)
-
 }
 
 // ---------------------------------------------------------------------------
@@ -393,28 +329,22 @@ export async function showCharacterDetails(
 // ---------------------------------------------------------------------------
 
 async function _generateFacing(
-  projectSlug: string,
-  entitySlug: string,
-  facing: Facing,
-  byRole: Map<string, Asset>,
+  projectSlug: string, entitySlug: string, facing: Facing, byRole: Map<string, Asset>,
 ): Promise<void> {
-  const resp = await fetch(`/projects/${projectSlug}/entities/${entitySlug}/generate-facing?facing=${facing}`, {
-    method: 'POST', credentials: 'include',
-  })
+  const resp = await fetch(
+    `/projects/${projectSlug}/entities/${entitySlug}/generate-facing?facing=${facing}`,
+    { method: 'POST', credentials: 'include' }
+  )
   if (!resp.ok) {
     const e = await resp.json().catch(() => ({ detail: resp.statusText }))
     throw new Error(e.detail ?? resp.statusText)
   }
-  const asset: Asset = await resp.json()
-  byRole.set(facingRole(facing), asset)
+  byRole.set(facingRole(facing), await resp.json())
 }
 
 async function _generateWalkCycle(
-  projectSlug: string,
-  entitySlug: string,
-  facing: Facing,
-  byRole: Map<string, Asset>,
-  onProgress: (n: number) => void,
+  projectSlug: string, entitySlug: string, facing: Facing,
+  byRole: Map<string, Asset>, onProgress: (n: number) => void,
 ): Promise<void> {
   for (let i = 1; i <= WALK_FRAME_COUNT; i++) {
     const resp = await fetch(
@@ -425,8 +355,7 @@ async function _generateWalkCycle(
       const e = await resp.json().catch(() => ({ detail: resp.statusText }))
       throw new Error(e.detail ?? resp.statusText)
     }
-    const asset: Asset = await resp.json()
-    byRole.set(walkRole(facing, i), asset)
+    byRole.set(walkRole(facing, i), await resp.json())
     onProgress(i)
   }
 }
