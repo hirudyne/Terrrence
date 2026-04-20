@@ -89,7 +89,7 @@ html, body { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden;
 .editor-tab.active { color: var(--text); background: var(--bg2); }
 .editor-tab-close { color: var(--text-dim); font-size: 0.7rem; }
 .editor-tab-close:hover { color: var(--danger); }
-.editor-area { flex: 1; overflow: hidden; }
+.editor-area { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .editor-empty { padding: 2rem; color: var(--text-dim); font-size: 0.9rem; }
 
 /* ---- CodeMirror ---- */
@@ -831,3 +831,105 @@ html, body { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden;
 }
 .char-details-sheet-wrap--empty { color: var(--text-dim); font-size: 0.75rem; padding: 8px; }
 .char-details-walk-sheet-img { height: 80px; width: auto; display: block; }
+
+/* ---- Scene Preview ---- */
+.scene-preview-wrap { flex: 1 1 0; min-height: 0; border-top: 1px solid var(--border); overflow: hidden; }
+/* When scene preview is active, CodeMirror gets 50% and preview gets 50% */
+.editor-area.has-scene-preview > .cm-editor,
+.editor-area.has-scene-preview > div > .cm-editor { max-height: 50%; }
+.editor-area.has-scene-preview > div:first-of-type { flex: 0 0 50%; overflow: hidden; }
+.scene-preview { width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--bg1); position: relative; }
+.scene-control-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; background: var(--bg2); border-bottom: 1px solid var(--border);
+  font-size: 0.75rem; flex: 0 0 auto;
+}
+.scene-ctrl-locname { font-weight: 600; color: var(--accent); }
+.scene-ctrl-btn {
+  padding: 2px 8px; border: 1px solid var(--border); background: var(--bg1);
+  color: var(--text); border-radius: 3px; cursor: pointer; font-size: 0.75rem;
+}
+.scene-ctrl-btn:hover { border-color: var(--accent); color: var(--accent); }
+.scene-canvas {
+  flex: 1 1 0; position: relative; overflow: hidden;
+  background: #111; min-height: 0;
+}
+.scene-bg {
+  position: absolute; inset: 0;
+  background-size: contain; background-repeat: no-repeat; background-position: center;
+}
+.scene-bg-empty {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim); font-size: 0.9rem; background: var(--bg2);
+}
+.scene-loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim); font-size: 0.85rem;
+}
+/* Spots */
+.scene-spot {
+  position: absolute; transform: translate(-50%, -50%);
+  width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
+  border: 2px solid #a8dadc; background: rgba(168,218,220,0.25);
+  transition: background 0.15s;
+}
+.scene-spot:hover { background: rgba(168,218,220,0.55); }
+.scene-spot.hot { border-color: #a8dadc; background: rgba(168,218,220,0.45); }
+.scene-spot.cold { border-style: dashed; background: transparent; }
+.scene-spot.blocked { opacity: 0.3; cursor: default; pointer-events: none; }
+/* Character sprites */
+.scene-char-sprite {
+  position: absolute; transform: translate(-50%, -100%);
+  display: flex; flex-direction: column; align-items: center;
+}
+.scene-char-sprite img { height: 80px; width: auto; display: block; image-rendering: pixelated; }
+.scene-char-placeholder {
+  width: 36px; height: 50px; background: var(--bg2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.8rem; color: var(--text-dim);
+}
+/* Item sprites */
+.scene-item-sprite {
+  position: absolute; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center;
+}
+.scene-item-sprite img { height: 40px; width: auto; display: block; image-rendering: pixelated; }
+.scene-item-placeholder {
+  width: 28px; height: 28px; background: var(--bg2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.65rem; color: var(--text-dim);
+}
+.scene-sprite-label {
+  font-size: 0.6rem; color: #fff; background: rgba(0,0,0,0.55);
+  padding: 1px 4px; border-radius: 2px; white-space: nowrap;
+  max-width: 80px; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* Conversation overlay */
+.scene-conv-overlay {
+  position: absolute; inset: 0; display: flex; align-items: flex-end;
+  background: rgba(0,0,0,0.45); z-index: 10;
+}
+.scene-conv-overlay.hidden { display: none; }
+.scene-conv-box {
+  width: 100%; background: var(--bg2); border-top: 2px solid var(--border);
+  padding: 12px 16px; display: flex; flex-direction: column; gap: 6px;
+  max-height: 50%; overflow-y: auto;
+}
+.scene-conv-line { display: flex; gap: 8px; font-size: 0.85rem; }
+.scene-conv-line.history { opacity: 0.4; }
+.scene-conv-speaker { font-weight: 600; color: var(--accent); flex: 0 0 auto; min-width: 80px; }
+.scene-conv-text { color: var(--text); }
+.scene-conv-prompt { font-size: 0.75rem; color: var(--text-dim); }
+.scene-conv-choice {
+  padding: 5px 12px; background: var(--bg1); border: 1px solid var(--border);
+  color: var(--text); border-radius: 3px; cursor: pointer; font-size: 0.82rem;
+  text-align: left; align-self: flex-start;
+}
+.scene-conv-choice:hover { border-color: var(--accent); color: var(--accent); }
+.scene-conv-end { font-size: 0.8rem; color: var(--text-dim); font-style: italic; }
+.scene-conv-close {
+  padding: 4px 10px; background: var(--bg1); border: 1px solid var(--border);
+  color: var(--text-dim); border-radius: 3px; cursor: pointer; font-size: 0.8rem;
+}
+.scene-conv-close:hover { border-color: var(--accent); }

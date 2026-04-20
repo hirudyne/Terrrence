@@ -19,6 +19,60 @@ export interface EntityDetail extends Entity {
   meta: Record<string, unknown>
 }
 
+
+export interface SceneAsset {
+  id: number
+  rel_path: string
+  mime: string
+  role: string | null
+}
+
+export interface SceneLocation {
+  slug: string
+  display_name: string
+  meta: Record<string, unknown>
+  scene_asset: SceneAsset | null
+}
+
+export interface SceneCharacter {
+  slug: string
+  display_name: string
+  meta: Record<string, unknown>
+  portrait_asset: SceneAsset | null
+}
+
+export interface SceneItem {
+  slug: string
+  display_name: string
+  meta: Record<string, unknown>
+  first_asset: SceneAsset | null
+}
+
+export interface SceneSpot {
+  slug: string
+  display_name: string
+  meta: Record<string, unknown>
+  parent_slug: string | null
+}
+
+export interface SceneEvent {
+  slug: string
+  display_name: string
+  trigger: string
+  effect: string
+  parent_slug: string | null
+}
+
+export interface SceneData {
+  game: { slug: string; display_name: string; meta: Record<string, unknown> } | null
+  locations: SceneLocation[]
+  characters: SceneCharacter[]
+  items: SceneItem[]
+  spots: SceneSpot[]
+  events: SceneEvent[]
+  chapters: { slug: string; display_name: string; parent_slug: string | null }[]
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
@@ -121,6 +175,8 @@ export const api = {
     req<Asset>('POST', `/projects/${project}/entities/${entity}/generate-walk-frame?facing=${facing}&frame=${frame}`),
   renderWalk: (project: string, entity: string, facing: string) =>
     req<{frames: Asset[], frame_w: number, frame_h: number, n: number}>('POST', `/projects/${project}/entities/${entity}/render-walk?facing=${facing}`),
+  getSceneData: (project: string) =>
+    req<SceneData>('GET', `/projects/${project}/scene-data`),
   renameEntity: (project: string, slug: string, display_name: string) =>
     req<Entity & { slug: string }>('POST', `/projects/${project}/entities/${slug}/rename`, { display_name }),
 }

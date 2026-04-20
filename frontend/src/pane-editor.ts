@@ -1,4 +1,5 @@
 import { api } from './api'
+import { ScenePreview } from './scene-preview'
 // Main editor pane - tabs for open entities, CodeMirror 6 + Yjs per entity.
 
 import { getState, setState, subscribe } from './state'
@@ -13,6 +14,8 @@ export class EditorPane {
   private activeTab: string | null = null
   private editorArea: HTMLElement
   private convEditors: Map<string, ConversationEditor> = new Map()
+  private scenePreview: ScenePreview | null = null
+  private sceneWrap: HTMLElement | null = null
 
   constructor(container: HTMLElement) {
     this.el = container
@@ -134,6 +137,7 @@ export class EditorPane {
       return
     }
 
+
     this.editorArea.innerHTML = ''
 
     const detail = await api.getEntity(state.projectSlug, slug)
@@ -156,6 +160,13 @@ export class EditorPane {
     this.editorArea.appendChild(wrap)
 
     getOrCreateEditor(slug, detail.type ?? 'unknown', wrap, detail.body, (_content) => { /* handled in editor.ts */ })
+
+    // For location entities: add scene preview below the editor
+    if (detail.type === 'location') {
+      this._mountScenePreview(slug)
+    } else {
+      this._destroyScenePreview()
+    }
   }
 
   private _mountConversationEditor(slug: string): void {
@@ -172,5 +183,34 @@ export class EditorPane {
     }
     conv.load(slug).then(() => {
     })
+  }
+
+  private _mountScenePreview(entitySlug: string) {
+    const state = getState()
+    if (!state.projectSlug) return
+
+    if (!this.sceneWrap) {
+      this.sceneWrap = document.createElement('div')
+      this.sceneWrap.className = 'scene-preview-wrap'
+    }
+    this.editorArea.appendChild(this.sceneWrap)
+
+    this.editorArea.classList.add('has-scene-preview')
+    if (!this.scenePreview) {
+      this.scenePreview = new ScenePreview(this.sceneWrap)
+    }
+    this.scenePreview.load(state.projectSlug, entitySlug)
+  }
+
+  private _destroyScenePreview() {
+    this.editorArea.classList.remove('has-scene-preview')
+    if (this.scenePreview) {
+      this.scenePreview.destroy()
+      this.scenePreview = null
+    }
+    if (this.sceneWrap) {
+      this.sceneWrap.remove()
+      this.sceneWrap = null
+    }
   }
 }

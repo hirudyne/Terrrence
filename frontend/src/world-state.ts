@@ -40,18 +40,12 @@ export function parseEffect(raw: string): Effect {
   if (s.startsWith('ItemGained_')) return { type: 'ItemGained', itemSlug: s.slice(11) }
   if (s.startsWith('ItemLost_')) return { type: 'ItemLost', itemSlug: s.slice(9) }
   if (s.startsWith('CharMove_')) {
-    // CharMove_charSlug_spotSlug - both slugs may contain underscores
-    // Convention: charSlug is the entity slug (no double-underscore), spotSlug the remainder.
-    // We match greedily on known character slugs at call site; here split on first underscore
-    // after prefix and treat remainder as spotSlug. Caller must pass charSlug separately if needed.
-    // For now: split into exactly two parts at the last double-underscore separator, falling back
-    // to a single underscore split at position of second underscore-delimited token.
-    // Simplest safe split: everything after 'CharMove_' up to last underscore-run boundary.
-    // Since slugs use single underscores, we split at the second underscore group:
+    // CharMove_<charSlug>__<spotSlug> - double-underscore separator to avoid ambiguity
+    // (both slugs may themselves contain single underscores)
     const rest = s.slice(9) // after 'CharMove_'
-    const firstUnd = rest.indexOf('_')
-    if (firstUnd === -1) return { type: 'Unknown', raw }
-    return { type: 'CharMove', charSlug: rest.slice(0, firstUnd), spotSlug: rest.slice(firstUnd + 1) }
+    const sep = rest.indexOf('__')
+    if (sep === -1) return { type: 'Unknown', raw }
+    return { type: 'CharMove', charSlug: rest.slice(0, sep), spotSlug: rest.slice(sep + 2) }
   }
   return { type: 'Unknown', raw }
 }

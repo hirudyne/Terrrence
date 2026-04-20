@@ -908,6 +908,139 @@ def ensure_entity(
 
 
 
+@app.get("/projects/{project_slug}/scene-data")
+def get_scene_data(
+    project_slug: str,
+    session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+):
+    """Bulk endpoint: returns all data needed to bootstrap the scene preview.
+
+    Returns:
+      game, locations (with meta+scene_asset), characters (with meta+portrait_asset),
+      items (with meta+first_asset), spots (with meta), events (trigger+effect), chapters.
+    """
+    api_key_id, _ = _require_session(session)
+    project = _project_for_session(project_slug, api_key_id)
+    project_id = project["id"]
+
+    with db() as conn:
+        entity_rows = conn.execute(
+            """SELECT e.slug, e.type, e.display_name, p.slug AS parent_slug
+               FROM entities e
+               LEFT JOIN entities p ON p.id = e.parent_id
+               WHERE e.project_id = %s""",
+            (project_id,),
+        ).fetchall()
+
+        # Cheapest possible asset map: first asset per entity (by asset id)
+        first_asset_rows = conn.execute(
+            """SELECT DISTINCT ON (ae.entity_id) e.slug AS entity_slug,
+                      a.id, a.rel_path, a.mime, ae.role
+               FROM asset_entities ae
+               JOIN assets a ON a.id = ae.asset_id
+               JOIN entities e ON e.id = ae.entity_id
+               WHERE e.project_id = %s
+               ORDER BY ae.entity_id, a.id""",
+            (project_id,),
+        ).fetchall()
+
+        # Portrait asset per character (preferred over first-asset)
+        portrait_rows = conn.execute(
+            """SELECT DISTINCT ON (ae.entity_id) e.slug AS entity_slug,
+                      a.id, a.rel_path, a.mime, ae.role
+               FROM asset_entities ae
+               JOIN assets a ON a.id = ae.asset_id
+               JOIN entities e ON e.id = ae.entity_id
+               WHERE e.project_id = %s AND e.type = 'character' AND ae.role = 'portrait'
+               ORDER BY ae.entity_id, a.id""",
+            (project_id,),
+        ).fetchall()
+
+        # For scene_image lookups we need a full asset map keyed by asset id
+        asset_by_id: dict = {}
+        for r in first_asset_rows:
+            asset_by_id[r["id"]] = {"id": r["id"], "rel_path": r["rel_path"],
+                                     "mime": r["mime"], "role": r["role"]}
+
+    first_asset_by_slug: dict = {r["entity_slug"]: {"id": r["id"], "rel_path": r["rel_path"],
+                                                      "mime": r["mime"], "role": r["role"]}
+                                  for r in first_asset_rows}
+    portrait_by_slug: dict = {r["entity_slug"]: {"id": r["id"], "rel_path": r["rel_path"],
+                                                   "mime": r["mime"], "role": r["role"]}
+                               for r in portrait_rows}
+
+    def _read_meta(slug: str) -> dict:
+        try:
+            post = _read_entity_file(project_slug, slug)
+            return {k: v for k, v in post.metadata.items()
+                    if k not in ("slug", "type", "display_name")}
+        except Exception:
+            return {}
+
+    def _read_event_meta(slug: str) -> tuple[str, str]:
+        try:
+            post = _read_entity_file(project_slug, slug)
+            return (post.metadata.get("trigger", "") or "",
+                    post.metadata.get("effect", "") or "")
+        except Exception:
+            return ("", "")
+
+    result: dict = {
+        "game": None, "locations": [], "characters": [],
+        "items": [], "spots": [], "events": [], "chapters": []
+    }
+
+    for row in entity_rows:
+        slug = row["slug"]
+        etype = row["type"]
+        dname = row["display_name"]
+        parent = row["parent_slug"]
+
+        if etype == "game":
+            result["game"] = {"slug": slug, "display_name": dname, "meta": _read_meta(slug)}
+
+        elif etype == "location":
+            meta = _read_meta(slug)
+            scene_id = meta.get("scene_image")
+            scene_asset = asset_by_id.get(scene_id) if scene_id else None
+            result["locations"].append({
+                "slug": slug, "display_name": dname, "meta": meta,
+                "scene_asset": scene_asset or first_asset_by_slug.get(slug),
+            })
+
+        elif etype == "character":
+            meta = _read_meta(slug)
+            result["characters"].append({
+                "slug": slug, "display_name": dname, "meta": meta,
+                "portrait_asset": portrait_by_slug.get(slug) or first_asset_by_slug.get(slug),
+            })
+
+        elif etype == "item":
+            meta = _read_meta(slug)
+            result["items"].append({
+                "slug": slug, "display_name": dname, "meta": meta,
+                "first_asset": first_asset_by_slug.get(slug),
+            })
+
+        elif etype == "spot":
+            meta = _read_meta(slug)
+            result["spots"].append({
+                "slug": slug, "display_name": dname, "meta": meta, "parent_slug": parent,
+            })
+
+        elif etype == "event":
+            trigger, effect = _read_event_meta(slug)
+            result["events"].append({
+                "slug": slug, "display_name": dname,
+                "trigger": trigger, "effect": effect, "parent_slug": parent,
+            })
+
+        elif etype == "chapter":
+            result["chapters"].append({"slug": slug, "display_name": dname, "parent_slug": parent})
+
+    return result
+
+
 @app.get("/projects/{project_slug}/entities/{entity_slug}/backlinks")
 def get_backlinks(
     project_slug: str,
