@@ -540,8 +540,8 @@ export class ScenePreview {
     // Cancel any existing walk
     this._cancelWalk()
 
-    // Apply aspect ratio to dy so facing inference uses screen-space proportions
-    const facing = inferFacing(dx, dy * aspect)
+    // dy already has aspect correction applied above; use it directly
+    const facing = inferFacing(dx, dy)
     const bestFacing = bestAvailableFacing(facing, Object.keys(rt.frameUrls)) ?? facing
     rt.facing = bestFacing
 
@@ -578,8 +578,8 @@ export class ScenePreview {
     const elapsed = now - anim.startMs
     const t = Math.min(elapsed / anim.durationMs, 1)
 
-    // Ease in/out over first/last 20%
-    const eased = t < 0.2 ? 2.5 * t * t : t > 0.8 ? 1 - 2.5 * (1 - t) * (1 - t) : t
+    // Smoothstep ease in/out: 3t^2 - 2t^3 (C1-continuous, no discontinuity)
+    const eased = t * t * (3 - 2 * t)
 
     const pos: Pos = {
       x: anim.from.x + (anim.to.x - anim.from.x) * eased,
