@@ -39,6 +39,7 @@ export interface SceneCharacter {
   display_name: string
   meta: Record<string, unknown>
   sprite_asset: SceneAsset | null
+  walk_frames: Record<string, SceneAsset[]>  // facing -> ordered frames
 }
 
 export interface SceneItem {

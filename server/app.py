@@ -950,6 +950,10 @@ def get_scene_data(
             'facing_right_transparent', 'facing_back_transparent',
             'facing_front', 'facing_left', 'facing_right', 'facing_back',
             'portrait',
+        ] + [
+            f'walk_puppet_{d}_frame_{i}'
+            for d in ('front', 'left', 'right', 'back')
+            for i in range(1, 9)
         ]
         portrait_rows = conn.execute(
             """SELECT e.slug AS entity_slug, a.id, a.rel_path, a.mime, ae.role
@@ -958,7 +962,7 @@ def get_scene_data(
                JOIN entities e ON e.id = ae.entity_id
                WHERE e.project_id = %s AND e.type = 'character'
                  AND ae.role = ANY(%s)
-               ORDER BY ae.entity_id, a.id""",
+               ORDER BY ae.entity_id, ae.role, a.id""",
             (project_id, _sprite_roles),
         ).fetchall()
 
@@ -986,6 +990,26 @@ def get_scene_data(
         if existing is None or _sprite_priority.index(role) < _sprite_priority.index(existing['role']):
             _char_sprites[slug] = {'id': r['id'], 'rel_path': r['rel_path'], 'mime': r['mime'], 'role': role}
     portrait_by_slug: dict = _char_sprites
+
+    # Group walk puppet frames per character per facing, in frame order
+    # { entity_slug: { facing: [ {id, rel_path, mime}, ... ] } }
+    _walk_frames: dict = {}
+    for r in portrait_rows:
+        role = r['role']
+        if not role or not role.startswith('walk_puppet_'):
+            continue
+        # role format: walk_puppet_{facing}_frame_{n}
+        parts = role.split('_')
+        # walk puppet {facing} frame {n} -> parts[2]=facing, parts[4]=n
+        if len(parts) < 5:
+            continue
+        facing = parts[2]
+        slug = r['entity_slug']
+        _walk_frames.setdefault(slug, {}).setdefault(facing, []).append(
+            {'id': r['id'], 'rel_path': r['rel_path'], 'mime': r['mime']}
+        )
+    # Sort each facing's frames by role name (already ordered by ORDER BY ae.role)
+
 
     def _read_meta(slug: str) -> dict:
         try:
@@ -1031,6 +1055,7 @@ def get_scene_data(
             result["characters"].append({
                 "slug": slug, "display_name": dname, "meta": meta,
                 "sprite_asset": portrait_by_slug.get(slug) or first_asset_by_slug.get(slug),
+                "walk_frames": _walk_frames.get(slug, {}),
             })
 
         elif etype == "item":
