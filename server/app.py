@@ -986,6 +986,8 @@ def get_scene_data(
     for r in portrait_rows:
         slug = r['entity_slug']
         role = r['role']
+        if not role or role.startswith('walk_puppet_'):
+            continue  # walk frames handled separately
         existing = _char_sprites.get(slug)
         if existing is None or _sprite_priority.index(role) < _sprite_priority.index(existing['role']):
             _char_sprites[slug] = {'id': r['id'], 'rel_path': r['rel_path'], 'mime': r['mime'], 'role': role}
