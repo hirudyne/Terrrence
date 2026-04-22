@@ -182,7 +182,8 @@ export class ScenePreview {
     const sd = this.sceneData!
     const ws = this.worldState
 
-    this._spriteEls.clear()
+    // Only clear cached sprite elements when not mid-walk (walk tick owns its element)
+    if (!this.walkAnim) this._spriteEls.clear()
     this.charRuntime.clear()
     for (const ch of sd.characters) {
       const startSpot = this._defaultSpotForChar(ch.slug)
@@ -234,6 +235,12 @@ export class ScenePreview {
       return
     }
 
+    // Detach sprite elements so they survive the innerHTML wipe
+    const savedSprites: [string, HTMLElement][] = []
+    for (const [slug, el] of this._spriteEls) {
+      if (this.canvas.contains(el)) { el.remove(); savedSprites.push([slug, el]) }
+    }
+
     this.canvas.innerHTML = ''
 
     // Background
@@ -270,9 +277,12 @@ export class ScenePreview {
       }
     }
 
-    // Characters (static; walk anim manages PC separately)
+    // Re-append previously detached sprites
+    for (const [, el] of savedSprites) this.canvas.appendChild(el)
+
+    // Characters (static; walk anim manages its own element via _placeCharSprite)
     for (const [slug, rt] of this.charRuntime) {
-      if (this.walkAnim?.charSlug === slug) continue  // walk anim owns this element
+      if (this.walkAnim?.charSlug === slug) continue
       const pos = rt.pos ?? (rt.currentSpot ? this._spotPos(this._spotBySlug(rt.currentSpot)) : null)
       if (pos) this._placeCharSprite(slug, rt, pos)
     }
@@ -339,44 +349,57 @@ export class ScenePreview {
 
   private _placeCharSprite(slug: string, rt: RuntimeChar, pos: Pos, frameIndex = 0): HTMLElement {
     let el = this._spriteEls.get(slug)
-    if (!el || !this.canvas.contains(el)) {
+    const isNew = !el
+    if (isNew) {
       el = document.createElement('div')
       el.className = 'scene-char-sprite'
       el.dataset.charSlug = slug
-      this.canvas.appendChild(el)
+      // Pre-build persistent img and label children - never recreate them
+      const img = document.createElement('img')
+      img.className = 'scene-char-img'
+      img.alt = rt.data.display_name
+      el.appendChild(img)
+      const ph = document.createElement('div')
+      ph.className = 'scene-char-ph'
+      el.appendChild(ph)
+      const label = document.createElement('div')
+      label.className = 'scene-sprite-label'
+      label.textContent = rt.data.display_name
+      el.appendChild(label)
       this._spriteEls.set(slug, el)
     }
+    if (!this.canvas.contains(el!)) this.canvas.appendChild(el!)
 
-    el.style.left = `${pos.x * 100}%`
-    el.style.top = `${pos.y * 100}%`
+    el!.style.left = `${pos.x * 100}%`
+    el!.style.top = `${pos.y * 100}%`
     const sc = depthScale(pos.y)
-    el.style.transform = `translate(-50%, -100%) scale(${sc})`
+    el!.style.transform = `translate(-50%, -100%) scale(${sc})`
 
     const frames = rt.frameUrls[rt.facing]
     const hasFrames = frames && frames.length >= WALK_FRAMES_PER_CYCLE
+    const img = el!.querySelector<HTMLImageElement>('.scene-char-img')!
+    const ph = el!.querySelector<HTMLElement>('.scene-char-ph')!
 
-    el.innerHTML = ''
     if (hasFrames) {
-      const img = document.createElement('img')
-      img.src = frames[frameIndex % WALK_FRAMES_PER_CYCLE]
-      img.alt = rt.data.display_name
-      el.appendChild(img)
+      const newSrc = frames[frameIndex % WALK_FRAMES_PER_CYCLE]
+      if (img.src !== newSrc) img.src = newSrc  // only update on actual frame change
+      img.style.display = ''
+      ph.style.display = 'none'
+      el!.classList.remove('scene-char-placeholder')
     } else if (rt.data.sprite_asset) {
-      const img = document.createElement('img')
-      img.src = api.assetFileUrl(this.projectSlug!, rt.data.sprite_asset.id)
-      img.alt = rt.data.display_name
-      el.appendChild(img)
+      const newSrc = api.assetFileUrl(this.projectSlug!, rt.data.sprite_asset.id)
+      if (img.src !== newSrc) img.src = newSrc
+      img.style.display = ''
+      ph.style.display = 'none'
+      el!.classList.remove('scene-char-placeholder')
     } else {
-      el.classList.add('scene-char-placeholder')
-      el.textContent = rt.data.display_name.slice(0, 2).toUpperCase()
+      img.style.display = 'none'
+      ph.style.display = ''
+      ph.textContent = rt.data.display_name.slice(0, 2).toUpperCase()
+      el!.classList.add('scene-char-placeholder')
     }
 
-    const label = document.createElement('div')
-    label.className = 'scene-sprite-label'
-    label.textContent = rt.data.display_name
-    el.appendChild(label)
-
-    return el
+    return el!
   }
 
   // ---------------------------------------------------------------------------
@@ -517,7 +540,8 @@ export class ScenePreview {
     // Cancel any existing walk
     this._cancelWalk()
 
-    const facing = inferFacing(dx, dy)
+    // Apply aspect ratio to dy so facing inference uses screen-space proportions
+    const facing = inferFacing(dx, dy * aspect)
     const bestFacing = bestAvailableFacing(facing, Object.keys(rt.frameUrls)) ?? facing
     rt.facing = bestFacing
 
