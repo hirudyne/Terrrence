@@ -531,23 +531,26 @@ export class ScenePreview {
 
     // Minimum distance check (2% of canvas width in normalised coords, accounting for aspect ratio)
     const canvasRect = this.canvas.getBoundingClientRect()
-    const aspect = canvasRect.width / (canvasRect.height || 1)
-    const dx = (target.x - fromPos.x)
-    const dy = (target.y - fromPos.y) * aspect  // rough aspect correction
-    const d = Math.sqrt(dx * dx + dy * dy)
+    // Convert normalised deltas to pixel-space for distance and facing.
+    // dx_px = dx * canvasW, dy_px = dy * canvasH = dy * canvasW/aspect.
+    // Use pixel-space components throughout so facing and distance are screen-accurate.
+    const canvasW = canvasRect.width || 800
+    const canvasH = canvasRect.height || 450
+    // Convert to pixel-space so facing inference and distance use screen proportions
+    const dx = (target.x - fromPos.x) * canvasW
+    const dy = (target.y - fromPos.y) * canvasH
+    const d = Math.sqrt(dx * dx + dy * dy) / canvasW  // normalised for distance threshold
     if (d < MIN_WALK_DIST_FRACTION) return
 
     // Cancel any existing walk
     this._cancelWalk()
 
-    // dy already has aspect correction applied above; use it directly
     const facing = inferFacing(dx, dy)
     const bestFacing = bestAvailableFacing(facing, Object.keys(rt.frameUrls)) ?? facing
     rt.facing = bestFacing
 
     // Duration proportional to distance; round to clean 8-frame multiple
-    const canvasW = canvasRect.width || 800
-    const physDist = d * canvasW  // pixels at current canvas size
+    const physDist = d * canvasW  // d is normalised, physDist is pixels
     const rawDurationMs = (physDist / WALK_SPEED_PX_PER_S) * 1000
     const framesPerSecond = 8  // base FPS for walk
     const rawTotalFrames = Math.max(8, Math.round((rawDurationMs / 1000) * framesPerSecond))
