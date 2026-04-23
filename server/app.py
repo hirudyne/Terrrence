@@ -1621,6 +1621,11 @@ def associate_asset(
         ).fetchone()
         if not asset:
             raise HTTPException(status_code=404, detail="asset not found")
+        if body.role:
+            conn.execute(
+                "UPDATE asset_entities SET role = NULL WHERE entity_id = %s AND role = %s AND asset_id != %s",
+                (entity["id"], body.role, body.asset_id),
+            )
         conn.execute(
             """INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (%s, %s, %s)
                ON CONFLICT (asset_id, entity_id) DO UPDATE SET role = EXCLUDED.role""",
