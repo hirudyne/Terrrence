@@ -124,6 +124,48 @@ export async function showCharacterDetails(
     upFacingBtn.onclick = () => upFacingInput.click()
     facingBtns.appendChild(upFacingBtn)
     facingBtns.appendChild(upFacingInput)
+
+    // Pick existing - collapsed by default
+    const pickBtn = document.createElement('button')
+    pickBtn.className = 'char-details-btn char-details-btn--secondary'
+    pickBtn.textContent = 'Pick existing'
+    const pickGrid = document.createElement('div')
+    pickGrid.className = 'char-details-pick-grid'
+    pickGrid.style.display = 'none'
+    let pickOpen = false
+    pickBtn.onclick = () => {
+      pickOpen = !pickOpen
+      pickGrid.style.display = pickOpen ? 'flex' : 'none'
+      pickBtn.textContent = pickOpen ? 'Cancel' : 'Pick existing'
+      if (pickOpen && !pickGrid.childElementCount) {
+        const imageAssets = assets.filter(a => a.mime && a.mime.startsWith('image/'))
+        if (!imageAssets.length) {
+          const none = document.createElement('span')
+          none.style.cssText = 'font-size:11px;color:var(--text-dim);padding:4px'
+          none.textContent = 'No image assets'
+          pickGrid.appendChild(none)
+        } else {
+          for (const a of imageAssets) {
+            const thumb = document.createElement('img')
+            thumb.src = api.assetFileUrl(projectSlug, a.id)
+            thumb.className = 'char-details-pick-thumb'
+            thumb.title = a.role ?? String(a.id)
+            thumb.onclick = async () => {
+              pickBtn.disabled = true; pickBtn.textContent = 'Setting...'
+              try {
+                await api.associateAsset(projectSlug, characterSlug, a.id, facingRole(facing))
+                overlay.remove(); showCharacterDetails(projectSlug, characterSlug, characterName)
+              } catch {
+                pickBtn.disabled = false; pickBtn.textContent = 'Pick existing'
+              }
+            }
+            pickGrid.appendChild(thumb)
+          }
+        }
+      }
+    }
+    facingBtns.appendChild(pickBtn)
+    facingSlot.appendChild(pickGrid)
     facingSlot.appendChild(facingBtns)
     facingRow.appendChild(facingSlot)
 
