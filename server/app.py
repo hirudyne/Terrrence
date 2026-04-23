@@ -1623,7 +1623,7 @@ def associate_asset(
             raise HTTPException(status_code=404, detail="asset not found")
         conn.execute(
             """INSERT INTO asset_entities (asset_id, entity_id, role) VALUES (%s, %s, %s)
-               ON CONFLICT DO NOTHING""",
+               ON CONFLICT (asset_id, entity_id) DO UPDATE SET role = EXCLUDED.role""",
             (body.asset_id, entity["id"], body.role),
         )
     return {"ok": True}
