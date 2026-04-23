@@ -638,6 +638,8 @@ export class PreviewPane {
 
 
   private _renderStartLocationFields(detail: import('./api').EntityDetail, projectSlug: string, locations: import('./api').Entity[]): HTMLElement {
+    const CREATE_SPOT_SENTINEL = '__create_spot__'
+    const charDisplayName = detail.display_name
     const wrap = document.createElement('div')
 
     const slHeading = document.createElement('div')
@@ -695,6 +697,10 @@ export class PreviewPane {
           if (s.slug === selectedSpot) opt.selected = true
           spotSel.appendChild(opt)
         }
+        const createOpt = document.createElement('option')
+        createOpt.value = CREATE_SPOT_SENTINEL
+        createOpt.textContent = `+ Create spot for ${charDisplayName}`
+        spotSel.appendChild(createOpt)
       } catch {}
     }
 
@@ -717,7 +723,25 @@ export class PreviewPane {
       await _populateSpots(locSel.value)
       _save()
     }
-    spotSel.onchange = _save
+    spotSel.onchange = async () => {
+      if (spotSel.value !== CREATE_SPOT_SENTINEL) { _save(); return }
+      spotSel.disabled = true
+      try {
+        const spotName = `${charDisplayName} start`
+        const result = await api.ensureEntity(projectSlug, spotName, 'spot', locSel.value)
+        if (result.slug) {
+          await api.updateEntityMeta(projectSlug, detail.slug, { start_location: { location: locSel.value, spot: result.slug } })
+          await _populateSpots(locSel.value, result.slug)
+        } else {
+          await _populateSpots(locSel.value)
+        }
+      } catch (e) {
+        console.debug('[terrrence] create spot error', e)
+        await _populateSpots(locSel.value)
+      } finally {
+        spotSel.disabled = false
+      }
+    }
 
     return wrap
   }
