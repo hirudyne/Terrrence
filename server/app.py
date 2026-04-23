@@ -2272,7 +2272,7 @@ def _get_portrait_bytes(project_slug: str, entity_id: int) -> bytes | None:
             "SELECT a.rel_path FROM assets a "
             "JOIN asset_entities ae ON ae.asset_id = a.id "
             "WHERE ae.entity_id = %s AND ae.role = 'portrait' "
-            "ORDER BY a.id LIMIT 1",
+            "ORDER BY a.id DESC LIMIT 1",
             (entity_id,),
         ).fetchone()
     if not row:
